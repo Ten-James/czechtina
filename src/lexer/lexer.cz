@@ -1,0 +1,362 @@
+package czechtina::lexer
+use czechtina::lexer::token
+
+use std
+
+struct LEXSTATE {
+    pos: int
+    line: int
+    col: int
+    text: pointer<char>
+
+    move count:int { void
+        text = this.text
+        for i -> 0 do count {
+            if text[this.pos] == 0 {
+                return
+            }
+            if text[this.pos] == '\n' {
+                this.line += 1
+                this.col = 1
+            } else {
+                this.col += 1
+            }
+            this.pos += 1
+        }
+    }
+
+    skipSpace { void
+        text = this.text
+        while text[this.pos] == ' ' || text[this.pos] == '\t' || text[this.pos] == '\n' || text[this.pos] == '\r' {
+            if text[this.pos] == '\n' {
+                this.line += 1
+                this.col = 1
+            } else {
+                this.col += 1
+            }
+            this.pos += 1
+        }
+    }
+
+    isCurrentWord word:pointer<char> { bool
+        text = this.text
+        i = 0;
+        while word[i] != 0 {
+            if text[this.pos + i] == 0 {
+                return false
+            }
+            if text[this.pos + i] != word[i] {
+                return false
+            }
+            i++
+        }
+        return true
+    }
+}
+
+
+
+lex text:pointer<char> { ARR
+    state = new LEXSTATE
+    state.text = text
+    state.pos = 0
+    state.line = 1
+    state.col = 1
+
+    tokens:pointer<TOKEN>
+    arr: ARR
+    // dont dealoct for memory in return 
+    inC "arr = (ARR *)malloc(sizeof(ARR))"
+    inC "tokens = (TOKEN **)((TOKEN **)malloc(255 * sizeof(TOKEN *)))"
+    inC "arr->arr = tokens"
+    arr.size = 0
+    arr.reserved = 255
+
+    while text[state.pos] != 0 {
+        state.skipSpace
+
+        if text[state.pos] == '+' {
+            if text[state.pos + 1] == '+' {
+                appendToken arr, state, TokenType.PlusPlus
+                state.move 1
+            } else if text[state.pos + 1] == '=' {
+                appendToken arr, state, TokenType.AsPlus
+            } else {
+                appendToken arr, state, TokenType.Plus
+            }
+        }
+        else if text[state.pos] == '-' {
+            if text[state.pos + 1] == '-' {
+                appendToken arr, state, TokenType.MinusMinus
+                state.move 1
+            } else if text[state.pos + 1] == '>' {
+                appendToken arr, state, TokenType.OpIterator
+                state.move 1
+            } else if text[state.pos + 1] == '=' {
+                appendToken arr, state, TokenType.AsMinus
+                state.move 1
+            } else {
+                appendToken arr, state, TokenType.Minus
+            }
+        }
+        else if text[state.pos] == '*' {
+            if text[state.pos + 1] == '=' {
+                appendToken arr, state, TokenType.AsStar
+                state.move 1
+            } else {
+                appendToken arr, state, TokenType.Star
+            }
+        }
+        else if text[state.pos] == '/' {
+            if text[state.pos + 1] == '=' {
+                appendToken arr, state, TokenType.AsSlash
+                state.move 1
+            } else {
+                appendToken arr, state, TokenType.Slash
+            }
+        }
+        else if text[state.pos] == '%' {
+            if text[state.pos + 1] == '=' {
+                appendToken arr, state, TokenType.AsModulo
+                state.move 1
+            } else {
+                appendToken arr, state, TokenType.Modulo
+            }
+        }
+        else if text[state.pos] == '=' {
+            if text[state.pos + 1] == '=' {
+                appendToken arr, state, TokenType.OpEqual
+                state.move 1
+            } else {
+                appendToken arr, state, TokenType.AsEqual
+            }
+        }
+        else if text[state.pos] == '!' {
+            if text[state.pos + 1] == '=' {
+                appendToken arr, state, TokenType.Bang
+                state.move 1
+            } else {
+                appendToken arr, state, TokenType.OpNotEqual
+            }
+        }
+        // punctuation
+        else if text[state.pos] == '(' ->
+            appendToken arr, state, TokenType.LeftParen
+        else if text[state.pos] == ')' ->
+            appendToken arr, state, TokenType.RightParen
+        else if text[state.pos] == '{' ->
+            appendToken arr, state, TokenType.LeftBrace
+        else if text[state.pos] == '}' ->
+            appendToken arr, state, TokenType.RightBrace
+        else if text[state.pos] == '[' ->
+            appendToken arr, state, TokenType.LeftBracket
+        else if text[state.pos] == ']' ->
+            appendToken arr, state, TokenType.RightBracket
+        else if text[state.pos] == ';' ->
+            appendToken arr, state, TokenType.Semicolon
+        else if text[state.pos] == ',' ->
+            appendToken arr, state, TokenType.Comma
+        else if text[state.pos] == '.' ->
+            appendToken arr, state, TokenType.Dot
+        else if text[state.pos] == ':' ->
+            appendToken arr, state, TokenType.Colon
+        else if text[state.pos] == '<' {
+            if text[state.pos + 1] == '=' {
+                appendToken arr, state, TokenType.OpLessEqual
+                state.move 1
+            } else {
+                appendToken arr, state, TokenType.OpLess
+            }
+        }
+        else if text[state.pos] == '>' {
+            if text[state.pos + 1] == '=' {
+                appendToken arr, state, TokenType.OpGreaterEqual
+                state.move 1
+            } else {
+                appendToken arr, state, TokenType.OpGreater
+            }
+        }
+        else if text[state.pos] == '&' {
+            if text[state.pos + 1] == '&' {
+                appendToken arr, state, TokenType.OpAnd
+                state.move 1
+            } else {
+                appendToken arr, state, TokenType.Ampersand
+            }
+        }
+        else if text[state.pos] == '|' && text[state.pos + 1] == '|'{
+            appendToken arr, state, TokenType.OpOr
+            state.move 1
+        }
+        else if state.isCurrentWord "if" {
+            appendToken arr, state, TokenType.KeyIf
+            state.move 1
+        }
+        else if state.isCurrentWord "else" {
+            appendToken arr, state, TokenType.KeyElse
+            state.move 3
+        }
+        else if state.isCurrentWord "while" {
+            appendToken arr, state, TokenType.KeyWhile
+            state.move 4
+        }
+        else if state.isCurrentWord "for" {
+            appendToken arr, state, TokenType.KeyFor
+            state.move 2
+        }
+        else if state.isCurrentWord "return" {
+            appendToken arr, state, TokenType.KeyReturn
+            state.move 5
+        }
+        else if state.isCurrentWord "break" {
+            appendToken arr, state, TokenType.KeyBreak
+            state.move 4
+        }
+        else if state.isCurrentWord "continue" {
+            appendToken arr, state, TokenType.KeyContinue
+            state.move 7
+        }
+        else if state.isCurrentWord "struct" {
+            appendToken arr, state, TokenType.KeyStruct
+            state.move 5
+        }
+        else if state.isCurrentWord "typedef" {
+            appendToken arr, state, TokenType.KeyTypedef
+            state.move 6
+        }
+        else if state.isCurrentWord "enum" {
+            appendToken arr, state, TokenType.KeyEnum
+            state.move 3
+        }
+        else if state.isCurrentWord "int" {
+            appendToken arr, state, TokenType.TypeInt
+            state.move 2
+        }
+        else if state.isCurrentWord "char" {
+            appendToken arr, state, TokenType.TypeChar
+            state.move 3
+        }
+        else if state.isCurrentWord "void" {
+            appendToken arr, state, TokenType.TypeVoid
+            state.move 3
+        }
+        else if state.isCurrentWord "bool" {
+            appendToken arr, state, TokenType.TypeBool
+            state.move 3
+        }
+        else if text[state.pos] >= '0' && text[state.pos] <= '9' {
+            value = 0
+            while text[state.pos] >= '0' && text[state.pos] <= '9' {
+                value = value * 10 + text[state.pos] - '0'
+                state.move 1
+            }
+            appendTokenNumber arr, state, TokenType.Number, value
+        }
+        else if 'a' <= text[state.pos] <= 'z' || 'A' <= text[state.pos] <= 'Z' {
+            pos = state.pos
+            while 'a' <= text[pos] <= 'z' || 'A'<= text[pos] <= 'Z' || '0' <= text[pos] <= '9' {
+                pos++
+            }
+            pos--
+            
+            identifierText = new char, pos - state.pos + 1
+            for i -> 0 do pos - state.pos+1 {
+                identifierText[i] = text[state.pos + i]
+            }
+            identifierText[pos - state.pos + 1] = 0
+
+            appendTokenString arr, state, TokenType.Identifier, &identifierText
+            
+            state.move pos - state.pos
+
+        }
+        else if text[state.pos] == 34 {
+            state.move 1
+            pos = state.pos
+            while text[state.pos] != 34 {
+                state.move 1
+            }
+
+            identifierText = new char, state.pos - pos
+            for i -> 0 do state.pos - pos - 1 {
+                identifierText[i] = text[pos + i]
+            }
+            identifierText[state.pos - pos -1] = 0
+
+            appendTokenString arr, state, TokenType.String, &identifierText
+        }
+        else if text[state.pos] == 39 {
+            state.move 1
+            value = text[state.pos]
+            if value == 92 {
+                state.move 1
+                value = text[state.pos]
+                if (value == 'n') -> value = 10
+                else if (value == 't') -> value = 9
+                else if (value == 'r') -> value = 13
+                else if (value == '0') -> value = 0
+                else if (value == 34) -> value = 34
+                else if (value == 39) -> value = 39
+                else if (value == 92) -> value = 92
+                else -> println "Unknown escape sequence: ", value
+            }
+            
+            appendTokenNumber arr, state, TokenType.Character, value
+        }
+        else if text[state.pos] == 0 {
+            appendToken arr, state, TokenType.Eof
+        }
+        else {
+            println "Unknown token: ", text[state.pos], " at ", state.line, ":", state.col
+            printf "char value %d\n", text[state.pos]
+        }
+
+        state.move 1
+    }
+
+    return arr
+}
+
+
+appendToken arr:ARR, state:LEXSTATE, type:int { void
+    token:TOKEN
+    inC "token = (TOKEN *)malloc(sizeof(TOKEN))"
+    token.type = type
+    token.line = state.line
+    token.col = state.col
+    token.value = state.text + state.pos
+    token.size = 1
+    inC "((void**)arr->arr)[arr->size] = token"
+    arr.size += 1
+    if arr.size == arr.reserved {
+        arr.realloc (sizeof TOKEN)
+    }
+}
+
+appendTokenNumber arr:ARR, state:LEXSTATE, type:int, number:int { void
+    token:TOKEN
+    inC "token = (TOKEN *)malloc(sizeof(TOKEN))"
+    token.type = type
+    token.line = state.line
+    token.col = state.col
+    token.value = number
+    inC "((void**)arr->arr)[arr->size] = token"
+    arr.size += 1
+    if arr.size == arr.reserved {
+        arr.realloc (sizeof TOKEN)
+    }
+}
+
+appendTokenString arr:ARR, state:LEXSTATE, type:int, text:&pointer<char> { void
+    token:TOKEN
+    inC "token = (TOKEN *)malloc(sizeof(TOKEN))"
+    token.type = type
+    token.line = state.line
+    token.col = state.col
+    token.consume &text
+    inC "((void**)arr->arr)[arr->size] = token"
+    arr.size += 1
+    if arr.size == arr.reserved {
+        arr.realloc (sizeof TOKEN)
+    }
+}

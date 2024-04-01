@@ -1,0 +1,97 @@
+package std::files
+
+
+readFile path:pointer<char> { &pointer<char>
+    inC "
+    FILE *file = fopen(path, \"r\");
+    if (file == NULL) {
+        fprintf(stderr, \"Error opening file %s\", path);
+        return NULL;
+    }
+
+    fseek(file, 0, SEEK_END);
+    long fileSize = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    char *fileContent = (char *)malloc((fileSize + 1) * sizeof(char));
+    if (fileContent == NULL) {
+        fprintf(stderr, \"Memory allocation error\");
+        fclose(file);
+        return NULL;
+    }
+
+    fread(fileContent, sizeof(char), fileSize, file);
+    fileContent[fileSize] = 0;
+
+    fclose(file);
+    return fileContent;
+    "
+}
+
+writeFile path:pointer<char>, content:pointer<char> { bool
+    inC "
+    FILE *file = fopen(path, \"w\");
+    if (file == NULL) {
+        fprintf(stderr, \"Error opening file %s\", path);
+        return false;
+    }
+
+    fprintf(file, \"%s\", content);
+    fclose(file);
+    return true;
+    "
+}
+
+
+struct FILEWRITER {
+    path: pointer<char>
+    stream: pointer<void>
+
+    init path:pointer<char> { void
+        this.path = path
+        this.stream = 0
+        zavolej this.open
+    }
+
+    open { bool
+        inC "
+        this->stream = fopen(this->path, \"w\");
+        if (this->stream == NULL) {
+            fprintf(stderr, \"Error opening file %s\", this->path);
+            return false;
+        }
+        return true;
+        "
+    }
+
+    write content:pointer<char> { bool
+        inC "
+        if (this->stream == NULL) {
+            fprintf(stderr, \"File not opened\");
+            return false;
+        }
+        fprintf(this->stream, \"%s\", content);
+        return true;
+        "
+    }
+
+    close { bool
+        inC "
+        if (this->stream == NULL) {
+            fprintf(stderr, \"File not opened\");
+            return false;
+        }
+        fclose(this->stream);
+        return true;
+        "
+    }
+
+    destruct { void
+        inC "
+        if (this->stream != NULL) {
+            fclose(this->stream);
+        }
+        "
+    }    
+
+}

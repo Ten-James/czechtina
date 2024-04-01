@@ -1,0 +1,5 @@
+// This is the build file of the project
+output = czechtina-cz
+buildDir = build
+main = src/main.cz
+src = src

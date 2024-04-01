@@ -1,0 +1,18 @@
+use czechtina::lexer
+use czechtina::utils::printer
+use std::files
+
+main argc:int, argv:pointer<pointer<char>> { 
+    if argc < 2 {
+        printf "Usage: %s <file>\n", argv[0]
+        throw "invalid arguments"
+    }
+    text = readFile argv[1]
+    tokens = lex text
+
+    writer = new FILEWRITER
+    writer.init "output.txt"
+    writer.write "test"
+    writer.close
+
+}

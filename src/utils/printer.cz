@@ -1,0 +1,22 @@
+package czechtina::utils::printer
+
+use std
+use czechtina::lexer::token
+
+
+printTokens arr:ARR { void
+    for i -> 0 do arr.size {
+        token:TOKEN
+        inC "token = ((void**)arr->arr)[i]"
+        print "{ "
+        printTokenType token.type 
+        print  ", col:", token.col, ", line:", token.line
+
+        if token.type == TokenType.Number ->
+            printf ", value: %d", token.value
+        else if token.type == TokenType.Identifier || token.type == TokenType.String ->
+            printf  ", value: %s", token.value
+
+        println " }"
+    }
+}

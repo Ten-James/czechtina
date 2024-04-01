@@ -1,0 +1,148 @@
+package czechtina::lexer::token
+
+enum TokenType {
+Plus             // +   done
+PlusPlus         // ++  done
+Minus            // -   done
+MinusMinus       // --  done
+Modulo           // %   done
+Ampersand        // &   done
+Star             // *   done
+Slash            // /   done
+Bang             // !   done
+
+// Keywords
+KeyIf            // if
+KeyElse          // else
+KeyWhile         // while
+KeyFor           // for
+KeyReturn        // return
+KeyBreak         // break
+KeyContinue      // continue
+KeyTypedef       // typedef
+KeyStruct        // struct
+KeyEnum          // enum
+
+// Literals
+Identifier       // [a-zA-Z_][a-zA-Z0-9_]*
+String           // ".*"
+Number           // [0-9]+
+Character        // '.'
+
+// Punctuation
+LeftParen        // (   done
+RightParen       // )   done
+LeftBrace        // {   done
+RightBrace       // }   done
+Comma            // ,   done
+Dot              // .   done
+Colon            // :   done
+Semicolon        // ;   done
+LeftBracket      // [   done
+RightBracket     // ]   done
+
+// Other
+OpLess           // <   done
+OpGreater        // >   done
+OpLessEqual      // <=  done
+OpGreaterEqual   // >=  done
+OpEqual          // ==  done
+OpNotEqual       // !=  done
+OpAnd            // &&  done
+OpOr             // ||  done
+OpIterator       // ->  done
+
+// Assignment
+AsEqual          // =   done
+AsPlus           // +=  done
+AsMinus          // -=  done
+AsStar           // *=  done
+AsSlash          // /=  done
+AsModulo         // %=  done
+
+// Types
+TypeInt          // int
+TypeChar         // char
+TypeVoid         // void
+TypeDecimal      // float
+TypeBool         // bool
+
+// End of file
+Eof
+}
+
+
+struct TOKEN {
+    type: int
+    value: pointer<char>
+    size: int
+    line: int
+    col: int
+
+    consume text: &pointer<char> { void
+        this.value = text
+        text = 0
+    }
+    
+    destruct { void
+        if this.value != 0 && this.type != TokenType.Number{
+            inC "free(this->value)"
+        }
+    }
+}
+
+printTokenType type:int { void
+    if type == TokenType.Plus -> print "+" 
+    else if type == TokenType.PlusPlus -> print "++" 
+    else if type == TokenType.Minus -> print "-" 
+    else if type == TokenType.MinusMinus -> print "--" 
+    else if type == TokenType.Modulo -> print "%" 
+    else if type == TokenType.Ampersand -> print "&" 
+    else if type == TokenType.Star -> print "*" 
+    else if type == TokenType.Slash -> print "/" 
+    else if type == TokenType.Bang -> print "!"
+    else if type == TokenType.KeyIf -> print "if" 
+    else if type == TokenType.KeyElse -> print "else" 
+    else if type == TokenType.KeyWhile -> print "while" 
+    else if type == TokenType.KeyFor -> print "for" 
+    else if type == TokenType.KeyReturn -> print "return" 
+    else if type == TokenType.KeyBreak -> print "break" 
+    else if type == TokenType.KeyContinue -> print "continue" 
+    else if type == TokenType.KeyTypedef -> print "typedef" 
+    else if type == TokenType.KeyStruct -> print "struct" 
+    else if type == TokenType.KeyEnum -> print "enum" 
+    else if type == TokenType.Identifier -> print "Identifier" 
+    else if type == TokenType.String -> print "String" 
+    else if type == TokenType.Number -> print "Number" 
+    else if type == TokenType.LeftParen -> print " " 
+    else if type == TokenType.RightParen -> print "" 
+    else if type == TokenType.LeftBrace -> print "{" 
+    else if type == TokenType.RightBrace -> print "}" 
+    else if type == TokenType.Comma -> print "," 
+    else if type == TokenType.Dot -> print "." 
+    else if type == TokenType.LeftBracket -> print "[" 
+    else if type == TokenType.RightBracket -> print "]" 
+    else if type == TokenType.OpLess -> print "<" 
+    else if type == TokenType.OpGreater -> print ">" 
+    else if type == TokenType.OpLessEqual -> print "<=" 
+    else if type == TokenType.OpGreaterEqual -> print ">=" 
+    else if type == TokenType.Colon -> print ":"
+    else if type == TokenType.OpEqual -> print "==" 
+    else if type == TokenType.OpNotEqual -> print "!=" 
+    else if type == TokenType.OpAnd -> print "&&" 
+    else if type == TokenType.OpOr -> print "||" 
+    else if type == TokenType.OpIterator -> print "->" 
+    else if type == TokenType.AsEqual -> print "=" 
+    else if type == TokenType.AsPlus -> print "+=" 
+    else if type == TokenType.AsMinus -> print "-=" 
+    else if type == TokenType.AsStar -> print "*=" 
+    else if type == TokenType.AsSlash -> print "/=" 
+    else if type == TokenType.AsModulo -> print "%="
+    else if type == TokenType.TypeInt -> print "int" 
+    else if type == TokenType.TypeChar -> print "char" 
+    else if type == TokenType.TypeVoid -> print "void" 
+    else if type == TokenType.TypeDecimal -> print "float" 
+    else if type == TokenType.TypeBool -> print "bool" 
+    else -> print "Unknown"
+    
+}

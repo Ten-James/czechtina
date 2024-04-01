@@ -1,0 +1,16 @@
+package std
+
+struct ARR {
+    arr: pointer<void>
+    size: int
+    reserved: int
+
+    destruct { void
+        inC "free(this->arr)"
+    }
+
+    realloc size:int { void
+        this.reserved = this.reserved * 2
+        inC "this->arr = realloc(this->arr, this->reserved * size)"
+    }
+} 
