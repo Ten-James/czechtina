@@ -1,0 +1,39 @@
+package czechtina::compiler::functions;
+use czechtina::parser::ast;
+use czechtina::compiler::types;
+use czechtina::lexer::token;
+
+
+struct FunctionVariant {
+    args:&pointer<&TYPE>;
+    size:int;
+}
+
+struct FunctionNode {
+    funName:pointer<char>;
+    returnType:&TYPE;
+    ast:&NODE;
+    isDepricated:bool;
+    variants:&pointer<&FunctionVariant>;
+    variantsSize:int;
+    variantsReserved:int;
+
+    init { void
+        this.isDepricated = false;
+        this.variantsSize = 0;
+        this.variantsReserved = 1;
+        this.variants = new &FunctionVariant,1;
+    }
+
+    consume ast:&NODE, funName:pointer<char>, tokens:pointer<TOKEN> { void
+        this.ast = &ast;
+        this.funName = funName;
+        variant:&FunctionVariant = new FunctionVariant;
+        variant.size = ast.size-2;
+        variant.args = new &TYPE,variant.size;
+        for i:int -> 0 do variant.size {
+            variant.args[i] = generateType ast.children[i].children[1], tokens;
+        }
+        this.variants[this.variantsSize] = &variant;
+    }
+}

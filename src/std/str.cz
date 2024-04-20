@@ -1,0 +1,138 @@
+package std::str;
+// Basic wrapper for strings
+// for working with bigger string use std::STRING
+struct STR {
+    ptr:&pointer<char>;
+    size:int;
+    reserved:int;
+
+    init { void
+        this.ptr = 0;
+        this.size = 0;
+        this.reserved = 0;
+    }
+
+    destruct { void
+        if this.ptr != 0 {
+            inC "free(this->ptr)";
+        }
+    }
+    copy { &STR
+        str:&STR = new STR;
+        zavolej str.init;
+        str.alloc this.size + 10;
+        str.appendPtr this.ptr;
+        return &str;
+    }
+
+
+    // realoc ptr to size
+    alloc size:int { void
+        if this.ptr != 0 {
+            inC "free(this->ptr)";
+        }
+
+
+        this.ptr = new char, size;
+        this.size = 0;
+        this.reserved = size;
+    }
+
+    // realoc ptr 
+    realloc { void
+        this.reserved = this.reserved * 2 + 10;
+        inC "this->ptr = realloc(this->ptr, this->reserved * sizeof(char))";
+    }
+
+    appendChar c:char { void
+        if this.reserved < this.size + 1 {
+            zavolej this.realloc;
+        }
+        this.ptr[this.size] = c;
+        this.size += 1;
+        this.ptr[this.size] = 0;
+    }
+
+    appendPtr ptr:pointer<char> { void
+        len:int = inC "strlen(ptr)";
+        while this.reserved < this.size + len {
+            zavolej this.realloc;
+        }
+        pos:int = 0;
+        while pos < len {
+            this.ptr[this.size + pos] = ptr[pos];
+            pos +=1;
+        }
+        this.size += pos; 
+        this.ptr[this.size] = 0;
+    }
+
+    appendInt val:int { void
+        if val == 0 {
+            this.appendChar '0';
+            return;
+        }
+        if val < 0 {
+            this.appendChar '-';
+            val = 0-val;
+        }
+        if val > 0 {
+            if val / 10 > 0 
+                -> this.appendInt val / 10;
+            this.appendChar (inC "val % 10") + '0';
+        }
+    }
+
+    isEndingWith ptr:pointer<char> { bool
+        len:int = inC "strlen(ptr)";
+        if this.size < len {
+            return false;
+        }
+        pos:int = 0;
+        while pos < len {
+            if this.ptr[this.size - len + pos] != ptr[pos] {
+                return false;
+            }
+            pos += 1;
+        }
+        return true;
+    }
+}
+
+//
+//  create STR struct with string
+//
+toSTR ptr:pointer<char> { &STR
+    str:&STR = new STR;
+    zavolej str.init;
+    len:int = inC "strlen(ptr)";
+    str.alloc len + 10;
+    str.appendPtr ptr;
+
+    return &str;
+}
+
+ptrEqual a:pointer<char>, b:pointer<char> { bool
+    i:int = 0;
+    while a[i] != 0 && b[i] != 0 {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    if b[i] != 0 || a[i] != 0 {
+        return false;
+    }
+    return true;
+}
+
+ptrStartsWith haystack:pointer<char>, needle:pointer<char> { bool
+    i:int = 0;
+    while needle[i] != 0 {
+        if haystack[i] != needle[i] {
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}

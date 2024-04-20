@@ -1,0 +1,108 @@
+package czechtina::compiler::scopes;
+use czechtina::compiler::types;
+use czechtina::utils::levenshtein;
+use std;
+use std::str;
+
+struct DEFINEDVARS {
+    name: &STR;
+    typ: &TYPE;
+    moved: bool;
+}
+
+struct SCOPE {
+    vars: &pointer<&DEFINEDVARS>;
+    size: int;
+    reserved: int;
+    parent:&?SCOPE;
+
+    init { void
+        this.vars = new &DEFINEDVARS, 10;
+        this.size = 0;
+        this.reserved = 10;
+        this.parent = 0;
+    }
+
+    define var:&DEFINEDVARS { void
+        if this.size == this.reserved {
+            this.reserved *= 2;
+            this.vars = inC "realloc(this->vars, this->reserved * sizeof(DEFINEDVARS))";
+        }
+        this.vars[this.size] = &var;
+        this.size += 1;
+    }
+
+    isDefined name:STR { bool
+        for i:int -> 0 do this.size {
+            var:DEFINEDVARS = this.vars[i];
+            n:pointer<char> = var.name.ptr;
+            if  ptrEqual n, name.ptr {
+                return true;
+            }
+        }
+        if this.parent != 0 {
+            return this.parent.isDefined name;
+        }
+
+        return false;
+    }
+
+    getClosestVariable name:pointer<char>, cur:int  { pointer<char> 
+        ret:pointer<char> = 0;
+        for i:int -> 0 do this.size {
+            val:int = levenshteinDistance name, this.vars[i].name.ptr;
+            if val < cur {
+                cur = val;
+                ret = this.vars[i].name.ptr;
+            }
+        }
+        if this.parent != 0 {
+            newRet:pointer<char> = this.parent.getClosestVariable name, cur;
+            if newRet != 0 {
+                return newRet;
+            }
+        }
+        return ret;
+    }
+
+    getType name:STR { TYPE
+        for i:int -> 0 do this.size {
+            var:DEFINEDVARS = this.vars[i];
+            n:pointer<char> = var.name.ptr;
+            if  ptrEqual n, name.ptr {
+                return var.typ;
+            }
+        }
+        if this.parent != 0 {
+            return this.parent.getType name;
+        }
+        throw "Variable not defined";
+    }
+
+    get name:pointer<char> { DEFINEDVARS 
+        for i:int -> 0 do this.size {
+            var:DEFINEDVARS = this.vars[i];
+            n:pointer<char> = var.name.ptr;
+            if  ptrEqual n, name {
+                return var;
+            }
+        }
+        if this.parent != 0 {
+            return this.parent.get name;
+        }
+        throw "Variable not defined";
+    } 
+
+
+    moveMemFromThisScope name:STR { void
+        for i:int -> 0 do this.size {
+            var:DEFINEDVARS = this.vars[i];
+            n:pointer<char> = var.name.ptr;
+            if ptrEqual n, name.ptr {
+                var.moved = true;
+            }
+        }
+
+    }
+
+}

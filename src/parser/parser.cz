@@ -1,0 +1,1818 @@
+package czechtina::parser;
+
+use czechtina::lexer::token;
+use czechtina::parser::ast;
+use czechtina::parser::programAST;
+use czechtina::compiler::enums;
+use czechtina::compiler::strcts;
+use czechtina::compiler::functions;
+use czechtina::compiler::types;
+use czechtina::utils::printer;
+use czechtina::utils::error;
+use std;
+use std::str;
+
+
+struct PARSER {
+    tokens:pointer<TOKEN>;
+    text:pointer<char>;
+    filePath:pointer<char>;
+    pos:int;
+    max:int;
+
+    generateError { &Error
+        err:&Error = new Error;
+        zavolej err.init;
+        err.level = ErrorLevel.ERROR;
+        err.pos = this.pos;
+        err.text = this.text;
+        err.tokens = this.tokens;
+        err.filePath = this.filePath;
+        err.message.appendPtr "Code cloudn't be parsed";
+        err.secMessage.appendPtr "syntax error: ";
+        return &err;
+    }
+
+    isNext type:int { bool 
+        if this.pos >= this.max {
+            return false;
+        }
+        inC "return this->tokens[this->pos]->type == type";
+    }
+
+    isNextOneOf types:pointer<int>, size:int { bool
+        if this.pos >= this.max {
+            return false;
+        }
+        tokens:pointer<TOKEN> = this.tokens;
+        for i:int -> 0 do size {
+            if tokens[this.pos].type == types[i] {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    hasInvalidTokens { bool
+        println "pos: ", this.pos, " max: ", this.max;
+        return this.pos < this.max;
+    }
+
+
+
+    type { &NODE
+        // primitiveType | pointer<type>
+        debugPrint "type";
+        cur:int = this.pos;
+
+        if this.isNext TokenType.Ampersand {
+            this.pos += 1;
+            tryType:&NODE = zavolej this.type;
+            if tryType == 0 {
+                err:&Error = zavolej this.generateError;
+                err.secMessage.appendPtr "missing type after MemMove type";
+                err.print true;
+                throw "syntax error in dynamic type";
+            }
+            node:&NODE = new NODE;
+            node.tokensStart = cur;
+            node.tokensEnd = this.pos - 1;
+            node.type = AstType.AstType;
+            node.consumeUnary &tryType, AstOperandType.MemMove;
+            return &node;
+        }
+
+        if this.isNext TokenType.QuestionMark {
+            this.pos += 1;
+            tryType:&NODE = zavolej this.type;
+            if tryType == 0 {
+                err:&Error = zavolej this.generateError;
+                err.secMessage.appendPtr "missing type after MemMove type";
+                err.print true;
+                throw "syntax error in dynamic type";
+            }
+            node:&NODE = new NODE;
+            node.tokensStart = cur;
+            node.tokensEnd = this.pos - 1;
+            node.type = AstType.AstType;
+            node.consumeUnary &tryType, AstOperandType.Optional;
+            return &node;
+        }
+
+
+        if this.isNext TokenType.TypePointer {
+            this.pos += 1;
+            
+            if (this.isNext TokenType.OpLess) == false {
+                err:&Error = zavolej this.generateError;
+                err.secMessage.appendPtr "missing < in pointer type";
+                err.print true;
+                throw "syntax error in pointer type";
+            }
+            this.pos += 1;
+            tryType:&NODE = zavolej this.type;
+            if tryType == 0 {
+                err:&Error = zavolej this.generateError;
+                err.secMessage.appendPtr "missing type in pointer type";
+                err.print true;
+                throw "syntax error in pointer type";
+            }
+            node:&NODE = new NODE;
+            node.tokensStart = cur;
+            node.tokensEnd = this.pos - 1;
+            node.type = AstType.AstType;
+            node.consumeUnary &tryType, AstOperandType.Nothing;
+
+            if (this.isNext TokenType.OpGreater) == false {
+                err:&Error = zavolej this.generateError;
+                err.secMessage.appendPtr "missing > in pointer type";
+                err.print true;
+                throw "syntax error in pointer type";
+            }
+            this.pos += 1;
+
+            return &node;
+        }
+        else if (this.isNext TokenType.TypeInt) || (this.isNext TokenType.TypeChar) || (this.isNext TokenType.TypeVoid) || (this.isNext TokenType.TypeBool) || (this.isNext TokenType.TypeDecimal) { 
+            node:&NODE = new NODE;
+            zavolej node.init;
+            node.type = AstType.AstType;
+            node.tokensStart = cur;
+            node.tokensEnd = cur;
+            this.pos += 1;
+            return &node;
+        }
+        else if this.isNext TokenType.Identifier {
+            node:&NODE = new NODE;
+            zavolej node.init;
+            node.type = AstType.AstType;
+            node.tokensStart = cur;
+            node.tokensEnd = cur;
+            this.pos += 1;
+            return &node;
+        }
+        this.pos = cur;
+        return 0;
+
+    }
+
+
+    /// EXPRESSIONS    
+
+    leftSingle { &NODE 
+        debugPrint "left_single";
+        cur:int = this.pos; 
+
+        if this.isNext TokenType.Identifier {
+            node:&NODE = new NODE;
+            zavolej node.init;
+            node.type = AstType.AstVariable;
+            node.tokensStart = cur;
+            node.tokensEnd = cur;
+
+            this.pos += 1;
+
+            while 1 {
+                secCur:int = this.pos;
+                if this.isNext TokenType.LeftBracket {
+                    this.pos += 1;
+                    tryExp:&NODE = zavolej this.expression;
+                    if tryExp == 0 {
+                        err:&Error = zavolej this.generateError;
+                        err.secMessage.appendPtr "missing expression in array access";
+                        err.print true;
+                        throw "syntax error in array access";
+                    }
+                    if (this.isNext TokenType.RightBracket) == false {
+                        err:&Error = zavolej this.generateError;
+                        err.secMessage.appendPtr "missing ] in array access";
+                        err.print true;
+                        throw "syntax error in array access";
+                    }
+                    this.pos += 1;
+                    oldNode:&NODE = &node;
+                    node = new NODE;
+                    node.tokensStart = oldNode.tokensStart;
+                    node.tokensEnd = this.pos - 1;
+                    node.type = AstType.AstArrayAccess;
+                    node.consumeBinary &oldNode, &tryExp, AstOperandType.Nothing;
+                }
+                else if this.isNext TokenType.Dot {
+                    this.pos += 1;
+                    if (this.isNext TokenType.Identifier) == false {
+                        this.pos = secCur;
+                        return &node;
+                    }
+
+
+                    secNode:&NODE = new NODE;
+                    zavolej secNode.init;
+                    secNode.type = AstType.AstVariable;
+                    secNode.tokensStart = this.pos;
+                    secNode.tokensEnd = this.pos;
+                    this.pos += 1;
+
+                    oldNode:&NODE = &node;
+                    node = new NODE;
+                    node.tokensStart = oldNode.tokensStart;
+                    node.tokensEnd = this.pos - 1;
+                    node.type = AstType.AstStructAccess;
+                    node.consumeBinary &oldNode, &secNode, AstOperandType.Nothing;
+                }
+                else {
+                    return &node;
+                }
+            }
+        }
+        this.pos = cur;
+        return 0;
+    }
+
+    singleExp { &NODE
+        debugPrint "singleExp";
+        cur:int = this.pos;
+
+        if this.isNext TokenType.String {
+            node:&NODE = new NODE;
+            zavolej node.init;
+            node.type = AstType.AstLiteral;
+            node.tokensStart = cur;
+            node.tokensEnd = cur;
+            this.pos += 1;
+            return &node;
+        }
+
+        tryLeft:&NODE = zavolej this.leftSingle;
+        if tryLeft != 0 {
+          
+
+            return &tryLeft;
+        }
+        
+        return 0;
+
+    }
+
+    unaryExp negative:bool { &NODE
+        debugPrint "unaryExp";
+        cur:int = this.pos;
+
+        if negative {
+            if this.isNext TokenType.Minus {
+                this.pos += 1;
+                tryUnary:&NODE = this.unaryExp negative;
+                if tryUnary == 0 {
+                    err:&Error = zavolej this.generateError;
+                    err.secMessage.appendPtr "missing expression after -";
+                    err.print true;
+                    throw "syntax error in negative expression";
+                }
+                node:&NODE = new NODE;
+                node.tokensStart = cur;
+                node.tokensEnd = this.pos - 1;
+                node.type = AstType.AstUnary;
+                node.consumeUnary &tryUnary, AstOperandType.Minus;
+                debugPrint "unaryExp negative found";
+                return &node;
+            }
+        }
+
+        if this.isNext TokenType.Bang {
+            this.pos += 1;
+            tryUnary:&NODE = this.unaryExp negative;
+            if tryUnary == 0 {
+                err:&Error = zavolej this.generateError;
+                err.secMessage.appendPtr "missing expression in not";
+                err.print true;
+                throw "syntax error in not expression";
+            }
+            node:&NODE = new NODE;
+            node.tokensStart = cur;
+            node.tokensEnd = this.pos - 1;
+            node.type = AstType.AstUnary;
+            node.consumeUnary &tryUnary, AstOperandType.Not;
+            debugPrint "unaryExp found";
+            return &node;
+        }
+
+
+        if this.isNext TokenType.KeyCall {
+            this.pos += 1;
+            trySingle:&NODE = zavolej this.singleExp;
+            if trySingle == 0 {
+                err:&Error = zavolej this.generateError;
+                err.secMessage.appendPtr "missing expression in call";
+                err.print true;
+                throw "syntax error in call expression";
+            }
+            node:&NODE = new NODE;
+            node.tokensStart = cur;
+            node.tokensEnd = this.pos - 1;
+            node.type = AstType.AstFunctionCall;
+            node.consumeUnary &trySingle, AstOperandType.Nothing;
+            debugPrint "unaryExp found";
+            return &node;
+        }
+
+        if this.isNext TokenType.LeftParen {
+            this.pos += 1;
+            tryExp:&NODE = zavolej this.expression;
+            if tryExp == 0 {
+                err:&Error = zavolej this.generateError;
+                err.secMessage.appendPtr "missing expression in brackets";
+                err.print true;
+                throw "syntax error in brackets expression";
+            }
+            if (this.isNext TokenType.RightParen) == false {
+                err:&Error = zavolej this.generateError;
+                err.secMessage.appendPtr "missing ) in brackets";
+                err.print true;
+                throw "syntax error in brackets expression";
+            }
+            this.pos += 1;
+            node:&NODE = new NODE;
+            node.tokensStart = cur;
+            node.tokensEnd = this.pos - 1;
+            node.type = AstType.AstUnary;
+            node.consumeUnary &tryExp, AstOperandType.Brackets;
+            return &node;
+        }
+
+        if this.isNext TokenType.Ampersand {
+            this.pos += 1;
+            if (this.isNext TokenType.Identifier) == false {
+                err:&Error = zavolej this.generateError;
+                err.secMessage.appendPtr "missing identifier after &";
+                err.print true;
+                throw "syntax error in reference expression";
+            }
+            node:&NODE = new NODE;
+            zavolej node.init;
+            node.type = AstType.AstVariable;
+            node.tokensStart = this.pos;
+            node.tokensEnd = this.pos;
+
+            node2:&NODE = new NODE;
+            zavolej node2.init;
+            node2.type = AstType.AstUnary;
+            node2.tokensStart = this.pos-1;
+            node2.tokensEnd = this.pos;
+            this.pos += 1;
+            node2.consumeUnary &node, AstOperandType.MemMove;
+            return &node2;
+
+        }
+
+        if this.isNext TokenType.Number {
+            debugPrint "number found";
+            node:&NODE = new NODE;
+            zavolej node.init;
+            node.type = AstType.AstLiteral;
+            node.tokensStart = cur;
+            node.tokensEnd = cur;
+            this.pos += 1;
+            return &node;
+
+        }
+
+        if this.isNext TokenType.Character {
+            debugPrint "character found";
+            node:&NODE = new NODE;
+            zavolej node.init;
+            node.type = AstType.AstLiteral;
+            node.tokensStart = cur;
+            node.tokensEnd = cur;
+            this.pos += 1;
+            return &node;
+        }
+
+        if this.isNext TokenType.BoolTrue {
+            debugPrint "bool true found";
+            node:&NODE = new NODE;
+            zavolej node.init;
+            node.type = AstType.AstLiteral;
+            node.tokensStart = cur;
+            node.tokensEnd = cur;
+            this.pos += 1;
+            return &node;
+        }
+
+        if this.isNext TokenType.BoolFalse {
+            debugPrint "bool false found";
+            node:&NODE = new NODE;
+            zavolej node.init;
+            node.type = AstType.AstLiteral;
+            node.tokensStart = cur;
+            node.tokensEnd = cur;
+            this.pos += 1;
+            return &node;
+        }
+
+
+        trySingle:&NODE = zavolej this.singleExp;
+
+        if trySingle != 0 {
+            debugPrint "singleExp found";
+
+            tryExp:&NODE = this.expr negative;
+            if tryExp == 0 {
+                return &trySingle;
+            }
+
+            debugPrint "function call found";
+
+            node:&NODE = new NODE;
+            zavolej node.init;
+            node.tokensStart = cur;
+            node.type = AstType.AstFunctionCall;
+            zavolej node.createArr;
+            node.add &trySingle;
+            node.add &tryExp;
+
+            while 1 {
+                secCur:int = this.pos;
+                if (this.isNext TokenType.Comma) == false {
+                    return &node;
+                }
+                debugPrint "found comma";
+                this.pos += 1;
+                tryExp:&NODE = this.expr negative;
+                if tryExp == 0 {
+                    err:&Error = zavolej this.generateError;
+                    err.secMessage.appendPtr "missing expression in function call";
+                    err.print true;
+                    throw "syntax error in function call";
+                }
+                node.add &tryExp;
+            }
+
+            throw "this should never happen";
+
+        }
+
+
+        this.pos = cur;
+        return 0;
+    }
+
+
+    retypedUnary negative:bool { &NODE
+        debugPrint "retypedUnary";
+        cur:int = this.pos;
+        tryUnary:&NODE = this.unaryExp negative;
+        if tryUnary != 0 {
+            if this.isNext TokenType.KeyAs {
+                this.pos += 1;
+                tryType:&NODE = zavolej this.type;
+                if tryType == 0 {
+                    err:&Error = zavolej this.generateError;
+                    err.secMessage.appendPtr "missing type after as";
+                    err.print true;
+                    throw "syntax error in cast";
+                }
+
+                
+                node:&NODE = new NODE;
+                zavolej node.init;
+                node.tokensStart = cur;
+                node.tokensEnd = this.pos - 1;
+                node.type = AstType.AstCast;
+                node.consumeBinary &tryUnary, &tryType, AstOperandType.Nothing;
+                return &node;
+            }
+            return &tryUnary;
+        }
+        return 0;
+    }
+
+    
+    factor negative:bool { &NODE
+        debugPrint "factor";
+        cur:int = this.pos;
+
+        tryUnary:&NODE = this.retypedUnary negative;
+
+        if tryUnary == 0 {
+            this.pos = cur;
+            return 0;
+        }
+
+        operand:int = 0;
+
+        if this.isNext TokenType.Star {
+            operand = AstOperandType.Star;
+        }
+        else if this.isNext TokenType.Slash {
+            operand = AstOperandType.Slash;
+        }
+        else if this.isNext TokenType.Modulo {
+            operand = AstOperandType.Modulo;
+        }
+        else {
+            return &tryUnary;
+        }
+        this.pos += 1;
+    
+        trySecUnary:&NODE = this.retypedUnary negative;
+
+        if trySecUnary == 0 {
+            this.pos = cur;
+            inC "free(tryUnary)";
+            return 0;
+        }
+
+        node:&NODE = new NODE;
+        node.tokensStart = cur;
+        node.type = AstType.AstFactor;
+        node.consumeBinary &tryUnary, &trySecUnary, operand;
+
+        debugPrint "factor found";
+        while 1 {
+            debugPrint "factor loop";
+            secCur:int = this.pos;
+            if this.isNext TokenType.Star {
+                operand = AstOperandType.Star;
+            }
+            else if this.isNext TokenType.Slash {
+                operand = AstOperandType.Slash;
+            }
+            else if this.isNext TokenType.Modulo {
+                operand = AstOperandType.Modulo;
+            }
+            else {
+                this.pos = secCur;
+                node.tokensEnd = secCur - 1;
+                return &node;
+            }
+            this.pos += 1;
+            trySecUnary = this.retypedUnary negative;
+
+            if trySecUnary == 0 {
+                this.pos = secCur;
+                node.tokensEnd = secCur - 1;
+                return &node;
+            }
+
+            oldNode:&NODE = &node;
+            node = new NODE;
+            oldNode.tokensEnd = secCur -1;
+            node.tokensStart = oldNode.tokensStart;
+            node.type = AstType.AstFactor;
+            node.consumeBinary &oldNode, &trySecUnary, operand;
+        }
+
+        throw "this should never happen";
+        //this should never happen
+        this.pos = cur;
+        return 0;
+    }
+
+    terms negative:bool { &NODE
+        debugPrint "terms";
+        cur:int = this.pos;
+
+        tryFactor:&NODE = this.factor negative;
+
+        if tryFactor == 0 {
+            this.pos = cur;
+            return 0;
+        }
+
+        operand:int = 0;
+        if this.isNext TokenType.Plus {
+            operand = AstOperandType.Plus;
+        }
+        else if this.isNext TokenType.Minus {
+            operand = AstOperandType.Minus;
+        }
+        else {
+            return &tryFactor;
+        }
+        this.pos += 1;
+    
+        trySecFactor:&NODE = this.factor negative;
+
+        if trySecFactor == 0 {
+            this.pos = cur;
+            inC "free(tryFactor)";
+            return 0;
+        }
+
+        node:&NODE = new NODE;
+        node.tokensStart = cur;
+        node.type = AstType.AstTerm;
+        node.consumeBinary &tryFactor, &trySecFactor, operand;
+
+        debugPrint "terms found";
+        while 1 {
+
+            debugPrint "terms loop";
+            secCur:int = this.pos;
+            if this.isNext TokenType.Plus {
+                operand = AstOperandType.Plus;
+            }
+            else if this.isNext TokenType.Minus {
+                operand = AstOperandType.Minus;
+            }
+            else {
+                this.pos = secCur;
+                node.tokensEnd = secCur - 1;
+                return &node;
+            }
+            this.pos += 1;
+            trySecFactor = this.factor negative;
+
+            if trySecFactor == 0 {
+                this.pos = secCur;
+                node.tokensEnd = secCur - 1;
+                return &node;
+            }
+
+            oldNode:&NODE = &node;
+            node = new NODE;
+            oldNode.tokensEnd = secCur -1;
+            node.tokensStart = oldNode.tokensStart;
+            node.type = AstType.AstTerm;
+            node.consumeBinary &oldNode, &trySecFactor, operand;
+        }
+
+        throw "this should never happen";
+        //this should never happen
+        this.pos = cur;
+        return 0;    
+    }
+
+
+    comparation negative:bool { &NODE
+        debugPrint "comparation";
+        cur:int = this.pos;
+
+        tryTerms:&NODE = this.terms negative;
+
+        if tryTerms == 0 {
+            this.pos = cur;
+            return 0;
+        }
+
+        operand:int = 0;
+
+        if this.isNext TokenType.OpEqual {
+            operand = AstOperandType.CompEqual;
+        }
+        else if this.isNext TokenType.OpNotEqual {
+            operand = AstOperandType.CompNotEqual;
+        }
+        else if this.isNext TokenType.OpLess {
+            operand = AstOperandType.CompLess;
+        }
+        else if this.isNext TokenType.OpLessEqual {
+            operand = AstOperandType.CompLessEqual;
+        }
+        else if this.isNext TokenType.OpGreater {
+            operand = AstOperandType.CompGreater;
+        }
+        else if this.isNext TokenType.OpGreaterEqual {
+            operand = AstOperandType.CompGreaterEqual;
+        }
+        else {
+            return tryTerms;
+        }
+        this.pos += 1;
+
+        trySecTerms:&NODE = this.terms negative;
+
+        if trySecTerms == 0 {
+            this.pos = cur;
+            inC "free(tryTerms)";
+            return 0;
+        }
+
+        node:&NODE = new NODE;
+        node.tokensStart = cur;
+        node.type = AstType.AstComparation;
+        node.consumeBinary &tryTerms, &trySecTerms, operand;
+
+        debugPrint "comparation found";
+
+        while 1 {
+            debugPrint "comparation loop";
+            secCur:int = this.pos;
+            if this.isNext TokenType.OpEqual {
+                operand = AstOperandType.CompEqual;
+            }
+            else if this.isNext TokenType.OpNotEqual {
+                operand = AstOperandType.CompNotEqual;
+            }
+            else if this.isNext TokenType.OpLess {
+                operand = AstOperandType.CompLess;
+            }
+            else if this.isNext TokenType.OpLessEqual {
+                operand = AstOperandType.CompLessEqual;
+            }
+            else if this.isNext TokenType.OpGreater {
+                operand = AstOperandType.CompGreater;
+            }
+            else if this.isNext TokenType.OpGreaterEqual {
+                operand = AstOperandType.CompGreaterEqual;
+            }
+            else {
+                this.pos = secCur;
+                node.tokensEnd = secCur - 1;
+                return &node;
+            }
+            this.pos += 1;
+            trySecTerms = this.terms negative;
+
+            if trySecTerms == 0 {
+                this.pos = secCur;
+                node.tokensEnd = secCur;
+                return &node;
+            }
+
+            oldNode:&NODE = &node;
+            node = new NODE;
+            oldNode.tokensEnd = secCur -1;
+            node.tokensStart = oldNode.tokensStart;
+            node.type = AstType.AstComparation;
+            node.consumeBinary &oldNode, &trySecTerms, operand;
+        }
+
+        throw "this should never happen";
+    }
+
+
+    expr negative:bool { &NODE
+        debugPrint "expression";
+        cur:int = this.pos;
+
+        tryComparation:&NODE = this.comparation negative;
+
+        if tryComparation == 0 {
+            tryComparation = this.comparation negative;
+        }
+
+        if tryComparation == 0 {
+            this.pos = cur;
+            return 0;
+        }
+
+        operand:int = 0;
+
+        if this.isNext TokenType.OpAnd {
+            operand = AstOperandType.And;
+        }
+        else if this.isNext TokenType.OpOr {
+            operand = AstOperandType.Or;
+        }
+        else {
+            return tryComparation;
+        }
+        this.pos += 1;
+
+        trySecComparation:&NODE = this.comparation negative;
+
+        if trySecComparation == 0 {
+            trySecComparation = this.comparation negative;
+        } 
+
+        if trySecComparation == 0 {
+            this.pos = cur;
+            inC "free(tryComparation)";
+            return 0;
+        }
+
+        node:&NODE = new NODE;
+
+        node.tokensStart = cur;
+        node.type = AstType.AstExpression;
+        node.consumeBinary &tryComparation, &trySecComparation, operand;
+
+        debugPrint "expression found";
+
+        while 1 {
+            debugPrint "expression loop";
+            secCur:int = this.pos;
+            if this.isNext TokenType.OpAnd {
+                operand = AstOperandType.And;
+            }
+            else if this.isNext TokenType.OpOr {
+                operand = AstOperandType.Or;
+            }
+            else {
+                this.pos = secCur;
+                node.tokensEnd = secCur - 1;
+                return &node;
+            }
+            this.pos += 1;
+            trySecComparation = this.comparation false;
+
+            if trySecComparation == 0 {
+                trySecComparation = this.comparation true;
+            }
+
+            if trySecComparation == 0 {
+                this.pos = secCur;
+                node.tokensEnd = secCur - 1;
+                return &node;
+            }
+
+            oldNode:&NODE = &node;
+            node = new NODE;
+            oldNode.tokensEnd = secCur -1;
+            node.tokensStart = oldNode.tokensStart;
+            node.type = AstType.AstExpression;
+            node.consumeBinary &oldNode, &trySecComparation, operand;
+        }
+
+        throw "this should never happen";
+    }
+
+    expression { &NODE
+        tryExp:&NODE = this.expr false;
+        if tryExp == 0 {
+            tryExp:&NODE = this.expr true;
+        }
+        if tryExp == 0 {
+            return 0;
+        }
+        return tryExp;    
+    }
+
+
+    /// STATEMENTS
+
+
+
+    varDefinition { &NODE
+        debugPrint "varDefinition";
+        cur:int = this.pos;
+        // identifier ":" type  
+        if (this.isNext TokenType.Identifier) == false {
+            return 0;
+        }
+        idenNode:&NODE = new NODE;
+        zavolej idenNode.init;
+        idenNode.type = AstType.AstVariable;
+        idenNode.tokensStart = this.pos;
+        idenNode.tokensEnd = this.pos;
+        this.pos += 1;
+        if (this.isNext TokenType.Colon) == false {
+            //printError this.pos, this.tokens, this.text, "missing : in variable declaration";
+            this.pos = cur;
+            return 0;
+        }
+        this.pos += 1;
+        tryType:&NODE = zavolej this.type;
+        if tryType == 0 {
+            err:&Error = zavolej this.generateError;
+            err.secMessage.appendPtr "missing type in variable declaration";
+            err.print true;
+            throw "syntax error in variable declaration";
+        }
+        node:&NODE = new NODE;
+        node.tokensStart = cur;
+        node.tokensEnd = this.pos - 1;
+        node.type = AstType.AstVariableDeclaration;
+        node.consumeBinary &idenNode, &tryType, AstOperandType.Nothing;
+        return &node;
+    }
+
+
+    // assignment
+
+    isNextAssignment { int
+        if this.isNext TokenType.AsEqual {
+            return AstOperandType.AsEqual;
+        }
+        if this.isNext TokenType.AsPlus {
+            return AstOperandType.AsPlus;
+        }
+        if this.isNext TokenType.AsMinus {
+            return AstOperandType.AsMinus;
+        }
+        if this.isNext TokenType.AsStar {
+            return AstOperandType.AsStar;
+        }
+        if this.isNext TokenType.AsSlash {
+            return AstOperandType.AsSlash;
+        }
+        if this.isNext TokenType.OpNotEqual {
+            return AstOperandType.AsNot;
+        }
+        if this.isNext TokenType.AsModulo {
+            return AstOperandType.AsModulo;
+        }
+        return 0;
+    }
+
+
+    NewNode { &NODE
+        debugPrint "NewNode";
+        // new type
+        // new type, expression
+        cur:int = this.pos;
+        if (this.isNext TokenType.KeyNew) == false {
+            return 0;
+        }
+        this.pos += 1;
+        tryType:&NODE = zavolej this.type;
+        if tryType == 0 {
+            err:&Error = zavolej this.generateError;
+            err.secMessage.appendPtr "missing type in new";
+            err.print true;
+            throw "syntax error in new statement";
+        }
+
+        if this.isNext TokenType.Comma {
+            this.pos += 1;
+            tryExp:&NODE = zavolej this.expression;
+            if tryExp == 0 {
+                err:&Error = zavolej this.generateError;
+                err.secMessage.appendPtr "missing expression in new";
+                err.print true;
+                throw "syntax error in new statement";
+            }
+            node:&NODE = new NODE;
+            node.tokensStart = cur;
+            node.tokensEnd = this.pos - 1;
+            node.type = AstType.AstNew;
+            node.consumeBinary &tryType, &tryExp, AstOperandType.Nothing;
+            return &node;
+        }
+
+        node:&NODE = new NODE;
+        node.tokensStart = cur;
+        node.tokensEnd = this.pos - 1;
+        node.type = AstType.AstNew;
+        node.consumeUnary &tryType, AstOperandType.Nothing;
+        return &node;
+    }
+
+
+    assignment { &NODE
+        debugPrint "assignment";
+        // singleExp assign expression
+        cur:int = this.pos;
+        trySingle:&NODE = zavolej this.leftSingle;
+        if trySingle == 0 {
+            return 0;
+        }
+        operand:int = zavolej this.isNextAssignment;
+        if operand == 0 {
+            this.pos = cur;
+            return 0;
+        }
+        debugPrint "operand found";
+        this.pos += 1;
+        trynew:&NODE = zavolej this.NewNode;
+        if trynew != 0 {
+            node:&NODE = new NODE;
+            node.tokensStart = cur;
+            node.tokensEnd = this.pos - 1;
+            node.type = AstType.AstAssignment;
+            node.consumeBinary &trySingle,&trynew, operand;
+            return &node;
+        }
+
+        tryExp:&NODE = zavolej this.expression;
+        if tryExp == 0 {
+            this.pos = cur;
+            return 0;
+        }
+
+        debugPrint "expression found";
+        node:&NODE = new NODE;
+        node.tokensStart = cur;
+        node.tokensEnd = this.pos - 1;
+        node.type = AstType.AstAssignment;
+        node.consumeBinary &trySingle, &tryExp, operand;
+        return &node;
+    }
+
+
+    unaryAssignment { &NODE
+        debugPrint "unaryAssigment";
+
+        cur:int = this.pos;
+        trySingle:&NODE = zavolej this.leftSingle;
+        if trySingle == 0 {
+            return 0;
+        }
+        operand:int = 0;
+        if this.isNext TokenType.PlusPlus {
+            operand = AstOperandType.PlusPlus;
+        }
+        else if this.isNext TokenType.MinusMinus {
+            operand = AstOperandType.MinusMinus;
+        }
+        else {
+            this.pos = cur;
+            return 0;
+        }
+        this.pos += 1;
+
+        node:&NODE = new NODE;
+        node.tokensStart = cur;
+        node.tokensEnd = this.pos - 1;
+        node.type = AstType.AstUnaryAssignment;
+        node.consumeUnary &trySingle, operand;
+        return &node;
+    }
+
+    // lines
+
+
+    innerlines { &NODE
+        debugPrint "lines";
+        cur:int = this.pos;
+        tryVarDef:&NODE = zavolej this.varDefinition;
+        if tryVarDef != 0 {
+            if this.isNext TokenType.AsEqual {
+                this.pos += 1;
+                tryNew:&NODE = zavolej this.NewNode;
+                if tryNew != 0 {
+                    node:&NODE = new NODE;
+                    node.tokensStart = cur;
+                    node.tokensEnd = this.pos - 1;
+                    node.type = AstType.AstAssignment;
+                    node.consumeBinary &tryVarDef, &tryNew, AstOperandType.AsEqual;
+                    if this.isNext TokenType.Semicolon {
+                        this.pos += 1;
+                    }
+                    else {
+                        err:&Error = zavolej this.generateError;
+                        err.secMessage.appendPtr "missing semicolon";
+                        err.print true;
+                        this.pos = cur;
+                        return 0;
+                    }
+                    return &node;
+                }
+
+                tryExp:&NODE = zavolej this.expression;
+                if tryExp == 0 {
+                    this.pos = cur;
+                    return 0;
+                }
+                oldNode:&NODE = &tryVarDef;
+                tryVarDef = new NODE;
+                tryVarDef.tokensStart = oldNode.tokensStart;
+                tryVarDef.tokensEnd = this.pos - 1;
+                tryVarDef.type = AstType.AstAssignment;
+                tryVarDef.consumeBinary &oldNode, &tryExp, AstOperandType.AsEqual;
+            }
+            if this.isNext TokenType.Semicolon {
+                this.pos += 1;
+            }
+            else {
+                err:&Error = zavolej this.generateError;
+                err.secMessage.appendPtr "missing semicolon";
+                err.print true;
+                this.pos = cur;
+                return 0;
+            }
+            return &tryVarDef;
+        }
+        tryUnaryAss:&NODE = zavolej this.unaryAssignment;
+        if tryUnaryAss != 0 {
+            if this.isNext TokenType.Semicolon {
+                this.pos += 1;
+            }
+            else {
+                err:&Error = zavolej this.generateError;
+                err.secMessage.appendPtr "missing semicolon";
+                err.print true;
+                this.pos = cur;
+                return 0;
+            }
+            return &tryUnaryAss;
+        }
+        tryAssignment:&NODE = zavolej this.assignment;
+        if tryAssignment != 0 {
+            if this.isNext TokenType.Semicolon {
+                this.pos += 1;
+            }
+            else {
+                err:&Error = zavolej this.generateError;
+                err.secMessage.appendPtr "missing semicolon";
+                err.print true;
+                this.pos = cur;
+                return 0;
+            }
+            return &tryAssignment;
+        }
+
+        tryExp:&NODE = zavolej this.expression;
+        if tryExp != 0 {
+            if this.isNext TokenType.Semicolon {
+                this.pos += 1;
+            }
+            else {
+                err:&Error = zavolej this.generateError;
+                err.secMessage.appendPtr "missing semicolon";
+                err.print true;
+                this.pos = cur;
+                return 0;
+            }
+            return &tryExp;
+        }
+        tryFlow:&NODE = zavolej this.flow;
+        if tryFlow != 0 {
+            return &tryFlow;
+        }
+        tryBlock:&NODE = zavolej this.blockLines;
+        if tryBlock != 0 {
+            return &tryBlock;
+        }
+        return 0;
+    }
+
+
+    lines { &NODE
+        debugPrint "lines";
+        cur:int = this.pos;
+        node:&NODE = new NODE;
+        zavolej node.init;
+        node.type = AstType.AstLines;
+        node.tokensStart = cur;
+        zavolej node.createArr;
+        while 1 {
+            tryInner:&NODE = zavolej this.innerlines;
+            if tryInner == 0 {
+                node.tokensEnd = this.pos - 1;
+                return &node;
+            }
+            node.add &tryInner;
+        }
+    }
+
+    // TODO reuse this code
+    blockLines { &NODE
+        debugPrint "block";
+        cur:int = this.pos;
+        if (this.isNext TokenType.LeftBrace) == false {
+            return 0;
+        }
+        this.pos +=1;
+        lines:&NODE = zavolej this.lines;
+        if (this.isNext TokenType.RightBrace) == false {
+            err:&Error = zavolej this.generateError;
+            err.secMessage.appendPtr "missing } in block";
+            err.print true;
+            this.pos = cur;
+            return 0;
+        }
+        this.pos += 1;
+        return lines;
+    }
+
+    blockOrIterExpr { &NODE
+        debugPrint "blockOrIterExpr";
+        cur:int = this.pos;
+        if this.isNext TokenType.OpIterator {
+            this.pos += 1;
+            tryExp:&NODE = zavolej this.innerlines;
+            if tryExp == 0 {
+                this.pos = cur;
+                return 0;
+            }
+            node:&NODE = new NODE;
+            node.tokensStart = tryExp.tokensStart;
+            node.tokensEnd = tryExp.tokensEnd;
+            node.type = AstType.AstLines;
+            node.consumeUnary &tryExp, AstOperandType.Nothing;
+            return &node;
+        }
+        tryBlock:&NODE = zavolej this.blockLines;
+        if tryBlock == 0 {
+            this.pos = cur;
+            return 0;
+        }
+        return &tryBlock;
+    }
+    
+
+
+    range { &NODE
+    // expression Keydo|Keyaz expression
+
+        debugPrint "range";
+        cur:int = this.pos;
+        tryExp:&NODE = zavolej this.expression;
+        if tryExp == 0 {
+            return 0;
+        }
+        operand:int = 0;
+        if this.isNext TokenType.KeyDo {
+            operand = AstOperandType.CompLess;
+        }
+        else if this.isNext TokenType.KeyAz {
+            operand = AstOperandType.CompLessEqual;
+        }
+        else {
+            this.pos = cur;
+            inC "free(tryExp)";
+            return 0;
+        }
+       
+        this.pos += 1;
+
+        trySecExp:&NODE = zavolej this.expression;
+        if trySecExp == 0 {
+            this.pos = cur;
+            inC "free(tryExp)";
+            return 0;
+        }
+        node:&NODE = new NODE;
+        node.tokensStart = cur;
+        node.tokensEnd = this.pos - 1;
+        node.type = AstType.AstRange;
+        node.consumeBinary &tryExp, &trySecExp, operand;
+        return &node;
+
+    }
+
+    rangedFor { &NODE
+        // for vardef -> range block
+
+        debugPrint "rangedFor";
+        cur:int = this.pos;
+        if (this.isNext TokenType.KeyFor) == false {
+            debugPrint "missing for";
+            return 0;
+        }
+        this.pos += 1;
+        tryVarDef:&NODE = zavolej this.varDefinition;
+        if tryVarDef == 0 {
+            this.pos = cur;
+            return 0;
+        }
+        forNode:&NODE = new NODE;
+        zavolej forNode.createArr;
+        forNode.type = AstType.AstRangeFor;
+        forNode.tokensStart = cur;
+
+        if (this.isNext TokenType.OpIterator) == false {
+            this.pos = cur;
+            inC "free(tryVarDef)";
+            return 0;
+        }
+
+        this.pos += 1;
+
+        tryRange:&NODE = zavolej this.range;
+        if tryRange == 0 {
+            this.pos = cur;
+            inC "free(tryVarDef)";
+            return 0;
+        }
+
+        tryBlock:&NODE = zavolej this.blockLines;
+        if tryBlock == 0 {
+            this.pos = cur;
+            inC "free(tryVarDef)";
+            inC "free(tryRange)";
+            return 0;
+        }
+
+        forNode.add &tryVarDef;
+        forNode.add &tryRange;
+        forNode.add &tryBlock;
+        forNode.tokensEnd = this.pos - 1;
+        return forNode;
+    }
+
+
+    // flow controll
+
+    ifStatement { &NODE
+        debugPrint "ifStatement";
+        cur:int = this.pos;
+        if (this.isNext TokenType.KeyIf) == false {
+            return 0;
+        }
+        this.pos += 1;
+        tryExp:&NODE = zavolej this.expression;
+        if tryExp == 0 {
+            err:&Error = zavolej this.generateError;
+            err.secMessage.appendPtr "missing expression in if";
+            err.print true;
+            throw "syntax error in if statement";
+        }
+
+        blockoriter:&NODE = zavolej this.blockOrIterExpr;
+        
+        node:&NODE = new NODE;
+        node.tokensStart = cur;
+        node.tokensEnd = this.pos - 1;
+        node.type = AstType.AstIf;
+        node.consumeBinary &tryExp, &blockoriter, AstOperandType.Block;
+
+        while 1 {
+            secCur:int = this.pos;
+            if this.isNext TokenType.KeyElse {
+                this.pos += 1;
+                if this.isNext TokenType.KeyIf {
+                    this.pos += 1;
+                    tryExp2 = zavolej this.expression;
+                    if tryExp2 == 0 {
+                        err:&Error = zavolej this.generateError;
+                        err.secMessage.appendPtr "missing expression in else if";
+                        err.print true;
+                        throw "syntax error in else if expr statement";
+                    }
+                    blockoriter2 = zavolej this.blockOrIterExpr;
+                    if blockoriter2 == 0 {
+                        err:&Error = zavolej this.generateError;
+                        err.secMessage.appendPtr "missing block in else if";
+                        err.print true;
+                        throw "syntax error in else if statement";
+
+                    }
+                    node.add &tryExp2;
+                    node.add &blockoriter2;
+                }
+                else {
+                    blockoriter2:&NODE = zavolej this.blockOrIterExpr;
+                    if blockoriter2 == 0 {
+                        err:&Error = zavolej this.generateError;
+                        err.secMessage.appendPtr "missing block in else";
+                        err.print true;
+                        throw "syntax error in else statement";
+                    }
+                    node.add &blockoriter2;
+                }
+            }
+            else {
+                return &node;
+            }
+        }
+
+    }
+
+    whileStatement { &NODE
+        debugPrint "whileStatement";
+        cur:int = this.pos;
+        if (this.isNext TokenType.KeyWhile) == false {
+            return 0;
+        }
+        this.pos += 1;
+        tryExp:&NODE = zavolej this.expression;
+        if tryExp == 0 {
+            printError this.pos, this.tokens, this.text, "missing expression in while";
+            throw "syntax error in while statement";
+        }
+        blockoriter:&NODE = zavolej this.blockOrIterExpr;
+        if blockoriter == 0 {
+            printError this.pos, this.tokens, this.text, "missing block in while";
+            throw "syntax error in while statement";
+        }
+        
+        node:&NODE = new NODE;
+        node.tokensStart = cur;
+        node.tokensEnd = this.pos - 1;
+        node.type = AstType.AstWhile;
+        node.consumeBinary &tryExp, &blockoriter, AstOperandType.Block;
+        return &node;
+    }
+
+    flow { &NODE
+        debugPrint "flow";
+        cur:int = this.pos;
+
+        // continue ;
+
+        if this.isNext TokenType.KeyContinue {
+            this.pos += 1;
+            if this.isNext TokenType.Semicolon {
+                this.pos += 1;
+                node:&NODE = new NODE;
+                zavolej node.init;
+                node.type = AstType.AstFlow;
+                node.tokensStart = cur;
+                node.tokensEnd = this.pos - 1;
+                return &node;
+            }
+            else {
+                printError this.pos, this.tokens, this.text, "missing semicolon";
+                throw "syntax error in continue statement";
+            }
+        }
+
+        this.pos = cur;
+
+        // break 
+
+        if this.isNext TokenType.KeyBreak {
+            this.pos += 1;
+            if this.isNext TokenType.Semicolon {
+                this.pos += 1;
+                node:&NODE = new NODE;
+                zavolej node.init;
+                node.type = AstType.AstFlow;
+                node.tokensStart = cur;
+                node.tokensEnd = this.pos - 1;
+                return &node;
+            }
+            else {
+                printError this.pos, this.tokens, this.text, "missing semicolon";
+                throw "syntax error in break statement";
+            }
+        }
+
+        this.pos = cur;
+
+        // return expr? ;
+
+        if this.isNext TokenType.KeyReturn {
+            this.pos += 1;
+            if this.isNext TokenType.Semicolon {
+                this.pos += 1;
+                node:&NODE = new NODE;
+                zavolej node.init;
+                node.type = AstType.AstFlow;
+                node.tokensStart = cur;
+                node.tokensEnd = this.pos - 1;
+                return &node;
+            }
+            tryExp:&NODE = zavolej this.expression;
+            if tryExp == 0 {
+                this.pos = cur;
+                return 0;
+            }
+            if this.isNext TokenType.Semicolon == false {
+                printError this.pos, this.tokens, this.text, "missing semicolon";
+                throw "syntax error in return statement";
+            }
+            this.pos += 1;
+            node:&NODE = new NODE;
+            zavolej node.init;
+            node.type = AstType.AstFlow;
+            node.tokensStart = cur;
+            node.tokensEnd = this.pos - 1;
+            node.consumeUnary &tryExp, AstOperandType.Nothing;
+            return &node;
+        }
+
+        this.pos = cur;
+
+        tryIf:&NODE = zavolej this.ifStatement;
+        if tryIf != 0 {
+            return &tryIf;
+        }
+
+
+        tryWhile:&NODE = zavolej this.whileStatement;
+        if tryWhile != 0 {
+            return &tryWhile;
+        }
+
+
+        tryRangeFor:&NODE = zavolej this.rangedFor;
+        if tryRangeFor != 0 {
+            return &tryRangeFor;
+        }
+
+        this.pos = cur;
+        return 0;
+    }
+
+    consumeFunctionDecorators func:FunctionNode { void
+        while 1 {
+            if this.isNext TokenType.FuncDepricated {
+                this.pos += 1;
+                func.isDepricated = true;
+                continue;
+            }
+            return;
+        }
+        return;    
+    }
+
+
+    function { &FunctionNode
+        debugPrint "function";
+        cur:int = this.pos;
+
+        
+        fncNode:&FunctionNode = new FunctionNode;
+        zavolej fncNode.init;
+
+        this.consumeFunctionDecorators fncNode;
+
+        if (this.isNext TokenType.Identifier) == false {
+            return 0;
+        }
+        fun:&NODE = new NODE;
+
+        zavolej fun.init;
+        zavolej fun.createArr;
+        fun.type = AstType.AstFunction;
+        fun.tokensStart = this.pos;
+        fun.tokensEnd = this.pos;
+        this.pos += 1;
+
+        while 1 {
+            secCur:int = this.pos;
+
+            tryVarDef:&NODE = zavolej this.varDefinition;
+
+            if tryVarDef == 0 {
+                break;
+            }
+
+            fun.add &tryVarDef;
+
+            if (this.isNext TokenType.Comma) == false {
+                break;
+            }
+            this.pos += 1;
+        }
+
+        if this.isNext TokenType.LeftBrace {
+            this.pos += 1;
+            debugPrint "function return type";
+            tryType:&NODE = zavolej this.type;
+
+            if tryType == 0 {
+                printError this.pos -1, this.tokens, this.text, "missing return type";
+                this.pos = fun.tokensStart;
+                return 0;
+            }
+            fun.add &tryType;
+
+            debugPrint "function block";
+
+            lines:&NODE = zavolej this.lines;
+
+            if this.isNext TokenType.RightBrace {
+                this.pos +=1;
+                fun.add &lines;
+                fun.tokensEnd = this.pos - 1;
+                name:pointer<char> = this.tokens[fun.tokensStart].value;
+                fncNode.consume &fun, name, this.tokens;
+
+                return fncNode;
+            }
+            
+            printError this.pos, this.tokens, this.text, "missing right cloudnt parse line";
+            throw "unhandled function block error";
+
+        }
+        else {
+            //its not function block
+            this.pos = cur;
+            return 0;
+        }
+
+        throw "Unhandled function error";
+
+        // TODO add -> function
+    }
+
+    parsePackageName { &STR
+        debugPrint "parsePackageName";
+        str:&STR = new STR;
+        zavolej str.init;
+        str.alloc 100;
+        while 1 {
+            if (this.isNext TokenType.Identifier) == false {
+                debugPrint "invalid package no identifier";
+                return 0;
+            }
+            str.appendPtr this.tokens[this.pos].value;
+            this.pos += 1;
+            if (this.isNext TokenType.Colon) == false {
+                return &str;
+            }
+            this.pos += 1;
+
+            if (this.isNext TokenType.Colon) == false {
+                printError this.pos, this.tokens, this.text, "missing 4-dot in package name";
+                throw "missing 4-dot in package name";
+            }
+            this.pos += 1;
+
+            str.appendPtr "::";
+        }
+
+        throw "this should never happen";
+    }
+
+
+// Enums
+
+    enm { &ENUM
+        debugPrint "enum";
+        cur:int = this.pos;
+        if (this.isNext TokenType.KeyEnum) == false {
+            return 0;
+        }
+        this.pos += 1;
+        if (this.isNext TokenType.Identifier) == false {
+            printError this.pos, this.tokens, this.text, "enum doesnt have name";
+            throw "missing identifier in enum";
+        }
+        enumName:pointer<char> = this.tokens[this.pos].value;
+        this.pos += 1;
+        if (this.isNext TokenType.LeftBrace) == false {
+            printError this.pos, this.tokens, this.text, "missing left brace in enum";
+            throw "missing left brace in enum";
+        }
+        this.pos += 1;
+        en:&ENUM = new ENUM;
+        en.init enumName;
+        while 1 {
+            if (this.isNext TokenType.Identifier) == false {
+                printError this.pos, this.tokens, this.text, "invalid token in enum";
+                throw "missing identifier in enum";
+            }
+            en.add this.tokens[this.pos].value;
+            this.pos += 1;
+            if this.isNext TokenType.Comma {
+                this.pos += 1;
+            }
+            else {
+                break;
+            }
+        }
+        if (this.isNext TokenType.RightBrace) == false {
+            printError this.pos, this.tokens, this.text, "missing right brace in enum";
+            throw "missing right brace in enum";
+        }
+        this.pos += 1;
+        return &en;
+
+    }
+
+
+    strctDefs { &STRCTENTRY
+        debugPrint "strctDefs";
+        cur:int = this.pos;
+
+        if (this.isNext TokenType.KeyStruct) == false {
+            return 0;
+        }
+        this.pos += 1;
+        if (this.isNext TokenType.Identifier) == false {
+            printError this.pos, this.tokens, this.text, "missing identifier in struct";
+            throw "missing identifier in struct";
+        }
+        strctName:pointer<char> = this.tokens[this.pos].value;
+        this.pos += 1;
+        if (this.isNext TokenType.LeftBrace) == false {
+            printError this.pos, this.tokens, this.text, "missing left brace in struct";
+            throw "missing left brace in struct";
+        }
+
+        this.pos += 1;
+        strctEntry:&STRCTENTRY = new STRCTENTRY;
+        zavolej strctEntry.init;
+        strctEntry.name = toSTR strctName;
+        while 1 {
+            tryfun:&FunctionNode = zavolej this.function;
+            if tryfun != 0 {
+                funNameStr:&STR = toSTR tryfun.funName;
+
+                retNode:NODE = tryfun.ast.children[tryfun.ast.size -2];
+                tryfun.returnType = generateType retNode, this.tokens;
+
+                strctEntry.addFun &funNameStr, &tryfun;
+                continue;
+            }
+            propName:&STR;
+            if this.isNext TokenType.Identifier {
+                propNameptr:pointer<char> = this.tokens[this.pos].value;
+                propName = toSTR propNameptr;
+                this.pos += 1;
+            }
+            else {
+                break;
+            }
+
+            if (this.isNext TokenType.Colon) == false {
+                printError this.pos-1, this.tokens, this.text, "missing colon in struct";
+                throw "missing colon in struct";
+            }
+            this.pos += 1;
+            tryType:&NODE = zavolej this.type;
+            if tryType == 0 {
+                printError this.pos-1, this.tokens, this.text, "missing type in struct";
+                throw "missing type in struct";
+            }
+            generatedType:&TYPE = generateType tryType, this.tokens;
+            strctEntry.addProp &propName, &generatedType;
+            if (this.isNext TokenType.Semicolon) == false {
+                printError this.pos-1, this.tokens, this.text, "missing semicolon in struct";
+                throw "missing semicolon in struct";
+            }
+            this.pos += 1;
+        }
+        if (this.isNext TokenType.RightBrace) == false {
+            printError this.pos-1, this.tokens, this.text, "missing right brace in struct";
+            throw "missing right brace in struct";
+        }
+        this.pos += 1;
+        return &strctEntry;
+    }
+
+
+    parseProgram { &PROGRAMAST
+        debugPrint "parseProgram";
+        program:&PROGRAMAST = new PROGRAMAST;
+        zavolej program.init;
+        while 1 {
+            if this.isNext TokenType.KeyPackage {
+                if program.packageName != 0 {
+                    throw "package already defined";
+                }
+                this.pos += 1;
+                tryPackage:&STR = zavolej this.parsePackageName;
+                if (this.isNext TokenType.Semicolon) == false {
+                    printError this.pos-1, this.tokens, this.text, "missing semicolon";
+                    throw "missing semicolon";
+                }
+                this.pos += 1;
+                if tryPackage == 0 {
+                    throw "invalid package name";
+                }
+                program.packageName = &tryPackage;
+                continue;
+            }
+
+            if this.isNext TokenType.KeyUse {
+                this.pos += 1;
+
+                tryUseName:&STR = zavolej this.parsePackageName;
+                if (this.isNext TokenType.Semicolon) == false {
+                    printError this.pos-1, this.tokens, this.text, "missing semicolon";
+                    throw "missing semicolon";
+                }
+                this.pos += 1;
+                if tryUseName == 0 {
+                    throw "invalid use name";
+                }
+                program.consumeImport &tryUseName;
+                continue;
+            }
+
+            tryStruct:&STRCTENTRY = zavolej this.strctDefs;
+            if tryStruct != 0 {
+                program.consumeStruct &tryStruct;
+                continue;
+            }
+
+            tryEnum:&ENUM = zavolej this.enm;
+
+            if tryEnum != 0 {
+                program.consumeEnum &tryEnum;
+                continue;
+            }
+
+            tryFun:&FunctionNode = zavolej this.function;
+            if tryFun != 0 {
+                // if is main function
+                name:pointer<char> = tryFun.funName;
+                isMain:bool = true;
+                mainIdent:pointer<char> = "main" as pointer<char>;
+                retNode:&NODE;
+                retNode = inC "tryFun->ast->children[tryFun->ast->size -2]";
+                tryFun.returnType = generateType retNode, this.tokens;
+                for i:int -> 0 do 4 {
+                    if name[i] != mainIdent[i] {
+                        isMain = false;
+                        break;
+                    }
+                }
+                if isMain {
+                    program.consumeMain &tryFun;
+                }
+                else {
+                    program.consumeFunction &tryFun;
+                }
+                continue;
+            }
+
+            return &program;
+        }
+    }
+
+
+    parse { &PROGRAMAST
+        debugPrint "parse";
+        this.pos = 0;
+        node:&PROGRAMAST = zavolej this.parseProgram;
+        if node == 0 {
+            throw "invalid cloud not parse";
+        }
+        if this.isNext TokenType.Eof {
+            this.pos += 1;
+        }
+        /*
+        if this.hasInvalidTokens {
+            throw "invalid tokens";
+        }
+        */
+        return &node;
+    }
+}

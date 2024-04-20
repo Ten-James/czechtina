@@ -1,0 +1,63 @@
+package czechtina::cli::readConfig;
+use std;
+use std::str;
+use std::files;
+
+readConfig name:pointer<char> {void
+    cmd:&STR = toSTR name;
+    cmd.appendPtr " ";
+    config:&pointer<char> = readFile ".buildczech";
+    if config == 0 {
+        return;
+    }
+    pos:int = 0;
+    while config[pos] != 0 {
+        if ptrStartsWith config + pos, "output=" {
+            pos += 7;
+            output:pointer<char> = config + pos;
+            cmd.appendPtr " -o ";
+            while output[0] != '\n' && output[0] != 0 {
+                cmd.appendChar output[0];
+                output += 1;
+            }
+        } 
+
+        if ptrStartsWith config + pos, "src=" {
+            pos += 4;
+            src:pointer<char> = config + pos;
+            cmd.appendPtr " --src ";
+            while src[0] != '\n' && src[0] != 0 {
+                cmd.appendChar src[0];
+                src += 1;
+            }
+        }
+
+        if ptrStartsWith config + pos, "outputDir=" {
+            pos += 10;
+            outputDir:pointer<char> = config + pos;
+            cmd.appendPtr " --output-dir ";
+            while outputDir[0] != '\n' && outputDir[0] != 0 {
+                cmd.appendChar outputDir[0];
+                outputDir += 1;
+            }
+        }
+        if ptrStartsWith config + pos, "debugFlags" {
+            pos += 11;
+            cmd.appendPtr " --debug-flags ";
+        }
+        if ptrStartsWith config + pos, "backup" {
+            pos += 6;
+            cmd.appendPtr " --backup ";
+        }
+
+
+        while config[pos] != '\n' && config[pos] != 0 {
+            pos += 1;
+        }
+        if config[pos] == 0 {
+            break;
+        }
+        pos += 1;
+    }
+    inC "system(cmd->ptr)";
+}

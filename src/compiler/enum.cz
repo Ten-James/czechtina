@@ -1,0 +1,38 @@
+package czechtina::compiler::enums;
+use std;
+use std::str;
+
+
+struct ENUMVALUE {
+    name: &STR;
+    value: int;
+    used: int;
+}
+
+struct ENUM {
+    name:&STR;
+    values: &pointer<&ENUMVALUE>;
+    size: int;
+    capacity: int;
+
+    init name:pointer<char> { void
+        this.name = toSTR name;
+        this.values = new &ENUMVALUE,10;
+        this.size = 0;
+        this.capacity = 10;
+    }
+
+    add name:pointer<char> { void
+        if this.size == this.capacity {
+            this.capacity *= 2;
+            this.values = inC"realloc(this->values, this->capacity * sizeof(ENUMVALUE))";
+        }
+        evalue:&ENUMVALUE = new ENUMVALUE;
+        evalue.name = toSTR name;
+        evalue.value = this.size;
+        evalue.used = 0;
+        this.values[this.size] = &evalue;
+        this.size += 1;
+    }
+
+}

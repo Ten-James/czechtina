@@ -1,0 +1,114 @@
+package czechtina::utils::error;
+use czechtina::lexer::token;
+use std::str;
+
+
+enum ErrorLevel {
+    INFO,
+    WARNING,
+    ERROR,
+    FATAL
+}
+
+struct Error {
+    message:&STR;
+    secMessage:&STR;
+    pos:int;
+    tokens:pointer<TOKEN>;
+    text:pointer<char>;
+    filePath:pointer<char>;
+    level:int;
+
+    init {void
+        this.message = toSTR "";
+        this.secMessage = toSTR "";
+        this.pos = 0;
+        this.level = ErrorLevel.ERROR;
+    }
+
+    destruct {void
+        zavolej this.message.destruct;
+        inC "free(this->message)";
+        zavolej this.secMessage.destruct;
+        inC "free(this->secMessage)";
+    }
+
+    setColor {void 
+        if this.level == ErrorLevel.INFO {
+            print "\033[34m";
+        } else if this.level == ErrorLevel.WARNING {
+            print "\033[33m";
+        } else if this.level == ErrorLevel.ERROR {
+            print "\033[91m";
+        } else if this.level == ErrorLevel.FATAL {
+            print "\033[91m";
+        }
+    }
+
+    print longPrint: bool { void 
+        old:FileStream;
+        inC "old = czStdOut";
+        inC "czStdOut = stderr";
+        token:TOKEN = this.tokens[this.pos];
+        text:pointer<char> = this.text;
+
+        print this.filePath, ":", token.line, ":", token.col, ": ";
+
+        zavolej this.setColor;
+
+        if this.level == ErrorLevel.INFO {
+            print "info: ";
+        } else if this.level == ErrorLevel.WARNING {
+            print "warning: ";
+        } else if this.level == ErrorLevel.ERROR {
+            print "error: ";
+        } else if this.level == ErrorLevel.FATAL {
+            print "fatal: ";
+        }
+        println  this.message.ptr;
+
+        print "\033[39m";
+
+        if longPrint {
+            println "-------------------------------------------";
+            textpos:int = 0;
+
+            for i:int -> 0 do token.line - 2 {
+                textpos++;
+                while text[textpos] != '\n' && text[textpos] != 0 {
+                    textpos++;
+                }        
+            }
+            printf "%4d|", token.line - 1;
+            textpos++;
+            while text[textpos] != '\n' && text[textpos] != 0 {
+                print text[textpos];
+                textpos++;
+            }
+            println "";
+            printf "%4d|", token.line;
+            textpos++;
+            while text[textpos] != '\n' && text[textpos] != 0 {
+                print text[textpos];
+                textpos++;
+            }
+            println "";
+            printf "    |";
+            for i:int -> 0 do token.col - 1 {
+                print " ";
+            }
+
+            zavolej this.setColor;
+            println "^", this.secMessage.ptr, "\033[39m";
+            printf "%4d|", token.line +1;
+            textpos++;
+            while text[textpos] != '\n' && text[textpos] != 0 {
+                print text[textpos];
+                textpos++;
+            }
+            println "";
+            println "-------------------------------------------";
+        }
+        inC "czStdOut = old";
+    }
+}

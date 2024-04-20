@@ -1,16 +1,26 @@
-package std
+package std;
+
+use std::str;
+
 
 struct ARR {
-    arr: pointer<void>
-    size: int
-    reserved: int
+    arr: pointer<void>;
+    size: int;
+    reserved: int;
 
     destruct { void
-        inC "free(this->arr)"
+        inC "free(this->arr)";
     }
 
     realloc size:int { void
-        this.reserved = this.reserved * 2
-        inC "this->arr = realloc(this->arr, this->reserved * size)"
+        this.reserved = this.reserved * 2;
+        inC "this->arr = realloc(this->arr, this->reserved * size)";
     }
-} 
+}
+
+
+debugPrint in:pointer<char> { void
+    if false {
+        printf "%s\n", in;
+    }
+}

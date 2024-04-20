@@ -1,0 +1,173 @@
+package czechtina::parser::ast;
+use std::str;
+
+
+struct NODE {
+    type: int;
+    tokensStart: int;
+    tokensEnd: int;
+    operand: int;
+    children:&?pointer<&NODE>;
+    strs:&?pointer<&STR>; // only for destruct 
+    size: int;
+    reserved: int;
+
+    init { void
+        this.children = 0;
+        this.size = 0;
+        this.reserved = 0;
+        this.operand = AstOperandType.Nothing;
+    }
+
+    consumeBinary left:&NODE, right:&NODE, operand:int {void
+        this.operand = operand;
+        this.size = 2;
+        this.reserved = 2;
+        this.children = new &NODE,2;
+        this.children[0] = &left;
+        this.children[1] = &right;
+    }
+
+    consumeUnary child:&NODE, operand:int {void
+        this.operand = operand;
+        this.size = 1;
+        this.reserved = 1;
+        this.children = new &NODE,1;
+        this.children[0] = &child;
+    }
+
+    createArr { void
+        this.size = 0;
+        this.reserved = 5;
+        this.children = new &NODE,5;
+    }
+
+    reallocStrs { void
+        this.reserved = this.reserved * 2;
+        this.strs = inC "realloc(this->strs, sizeof(STR *) * this->reserved)";
+    }
+    
+    add node:&NODE { void
+        if this.size == this.reserved {
+            this.reserved = this.reserved * 2;
+            this.children = inC "realloc(this->children, sizeof(NODE *) * this->reserved)";
+        }
+        this.children[this.size] = &node;
+        this.size = this.size + 1;
+    }
+    addBeforeNode beforeNode:NODE, node:&NODE { void
+        if this.size == this.reserved {
+            this.reserved = this.reserved * 2;
+            this.children = inC "realloc(this->children, sizeof(NODE *) * this->reserved)";
+        }
+        //get before index
+        before:int = 0;
+        for i:int -> 0 do this.size {
+            if this.children[i] == beforeNode {
+                before = i;
+                break;
+            }
+        }
+        this.size += 1;
+        pos:int = this.size - 1;
+        while pos > before {
+            inC "this->children[pos] = this->children[pos - 1]";
+            pos -= 1;
+        }
+        this.children[before] = &node;
+    }
+
+}
+
+
+enum AstType {
+    AstFunction,
+    AstStructAccess,
+    AstArrayAccess,
+    AstType,
+    AstFlow,
+    AstRange,
+    AstRangeFor,
+    AstFor,
+    AstWhile,
+    AstIf,
+    AstLines,
+    AstExpression,
+    AstComparation,
+    AstAssignment,
+    AstUnaryAssignment,
+    AstTerm,
+    AstFactor,
+    AstUnary,
+    AstLiteral,
+    AstVariable,
+    AstVariableDeclaration,
+    AstFunctionCall,
+    AstCast,
+    AstNew,
+    AstDestruct
+}
+
+enum AstOperandType {
+    Nothing,
+    Not,
+    Dereference,
+    MemMove,
+    Optional,
+    Brackets,
+    Block,
+    CompEqual,
+    CompNotEqual,
+    CompLess,
+    CompGreater,
+    CompLessEqual,
+    CompGreaterEqual,
+    Plus,
+    PlusPlus,
+    Minus,
+    MinusMinus,
+    Star,
+    Slash,
+    Modulo,
+    AsEqual,
+    AsPlus,
+    AsNot,
+    AsMinus,
+    AsModulo,
+    AsSlash,
+    AsStar,
+    And,
+    Or
+}
+
+printAstOperandType type:int {void
+    if type == AstOperandType.Nothing -> print "";
+    else if type == AstOperandType.Not -> print "!";
+    else if type == AstOperandType.Dereference -> print "*";
+    else if type == AstOperandType.MemMove -> print "memmove";
+    else if type == AstOperandType.Brackets -> print "()";
+    else if type == AstOperandType.Block -> print "";
+    else if type == AstOperandType.CompEqual -> print "==";
+    else if type == AstOperandType.CompNotEqual -> print "!=";
+    else if type == AstOperandType.CompLess -> print "<";
+    else if type == AstOperandType.CompGreater -> print ">";
+    else if type == AstOperandType.CompLessEqual -> print "<=";
+    else if type == AstOperandType.CompGreaterEqual -> print ">=";
+    else if type == AstOperandType.Plus -> print "+";
+    else if type == AstOperandType.PlusPlus -> print "++";
+    else if type == AstOperandType.Minus -> print "-";
+    else if type == AstOperandType.MinusMinus -> print "--";
+    else if type == AstOperandType.Star -> print "*";
+    else if type == AstOperandType.Slash -> print "/";
+    else if type == AstOperandType.Modulo -> print "%%";
+    else if type == AstOperandType.AsEqual -> print "=";
+    else if type == AstOperandType.AsPlus -> print "+=";
+    else if type == AstOperandType.AsNot -> print "!=";
+    else if type == AstOperandType.AsMinus -> print "-=";
+    else if type == AstOperandType.AsModulo -> print "%%=";
+    else if type == AstOperandType.AsSlash -> print "/=";
+    else if type == AstOperandType.AsStar -> print "*=";
+    else if type == AstOperandType.And -> print "&&";
+    else if type == AstOperandType.Or -> print "||";
+    else -> print "Unknown";
+}

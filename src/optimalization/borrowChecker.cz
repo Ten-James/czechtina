@@ -1,0 +1,326 @@
+package czechtina::optimalization::borrowchecker;
+use czechtina::parser::ast;
+use czechtina::compiler;
+use czechtina::parser::programAST;
+use czechtina::compiler::scopes;
+use czechtina::compiler::enums;
+use czechtina::compiler::strcts;
+use czechtina::compiler::functions;
+use czechtina::compiler::types;
+use czechtina::lexer::token;
+use std;
+use std::str;
+
+
+struct BorrowChecker {
+    process:COMPILEPROCESS;
+    scope:&SCOPE;
+    safeScope:SCOPE;
+    loopSafeScope:SCOPE;
+    shouldPrint:bool;
+
+    scopePop { void
+        scope:&SCOPE;
+        inC "scope = this->scope";
+        if scope.parent == 0 {
+            throw "Cant pop global scope";
+        }
+        inC "this->scope = scope->parent";
+
+        if !this.shouldPrint -> return;
+    
+        
+        for i:int -> 0 do scope.size {
+            def:DEFINEDVARS = scope.vars[scope.size - 1 -i];
+            if def.typ.isMemMove && def.moved == false {
+                println "\t\033[91m  Variable ", def.name.ptr, " leaks memory\033[39m";
+            }
+        }
+    }
+
+    scopePush { void
+        scope:&SCOPE = new SCOPE;
+        zavolej scope.init;
+        inC "scope->parent = this->scope";
+        this.scope = &scope;
+    }
+
+    printLeakedUntilSafe { void
+        scope:SCOPE = this.scope;
+        while scope != this.safeScope {
+            for i:int -> 0 do scope.size {
+                def:DEFINEDVARS = scope.vars[scope.size - 1 -i];
+                if def.typ.isMemMove && def.moved == false {
+                    println "\t\033[91m  Variable ", def.name.ptr, " leaks memory\033[39m";
+                }
+            }
+            scope = scope.parent;
+        }
+    }
+
+
+    testFunctionLeak ast:FunctionNode { void
+        if this.shouldPrint -> printf "Testing function %s: %s\n",this.process.filePath.ptr, ast.funName;
+        this.scope = new SCOPE;
+        zavolej this.scope.init;
+        this.safeScope = this.scope;
+        zavolej this.scopePush;
+        pos:int = 0;
+        while pos < ast.ast.size - 2 {
+            this.testRecursive ast.ast.children[pos], ast.ast;
+            pos += 1;
+        }
+
+        this.testRecursive ast.ast.children[ast.ast.size - 1], ast.ast;
+
+        zavolej this.scopePop;
+    }
+
+    testStructLeak strct:STRCTENTRY { void
+        for i:int -> 0 do strct.fSize {
+            this.scope = new SCOPE;
+            zavolej this.scope.init;
+            this.safeScope = this.scope;
+            ast:FunctionNode = strct.funs[i].ast;
+            if this.shouldPrint -> printf "Testing struct function %s: %s: %s\n",this.process.filePath.ptr, strct.name.ptr, ast.funName;
+            childs:pointer<NODE>;
+            inC "childs = (NODE**)strct->funs[i]->ast->ast->children";
+            zavolej this.scopePush;
+            thisStr = toSTR "this";
+            thisType:&TYPE = new TYPE;
+            thisType.name = toSTR strct.name.ptr;
+            thisType.variant = TypeVariant.TypeStruct;
+            thisVar:&DEFINEDVARS = new DEFINEDVARS;
+            thisVar.moved = ptrEqual ast.funName, "destruct";
+            thisVar.name = &thisStr;
+            thisVar.typ = &thisType;
+            this.scope.define &thisVar;
+            pos:int = 0;
+            while pos < ast.ast.size - 2 {
+                this.testRecursive childs[pos], ast.ast;
+                pos = pos + 1;
+            }
+            this.testRecursive childs[ast.ast.size - 1], ast.ast;
+            zavolej this.scopePop;
+        }
+    }
+
+
+    testRecursive ast:NODE, parentAst:NODE { void
+        if ast.type == AstType.AstLines {
+            curSize:int = ast.size;
+            for i:int -> 0 do curSize {
+                this.testRecursive ast.children[i], ast;
+            }
+            
+                node:&NODE = new NODE;
+                zavolej node.init;
+                node.type = AstType.AstDestruct;
+                node.strs = new &STR, 2;
+                node.reserved = 2;
+
+                scope:SCOPE = this.scope;
+                for i:int -> 0 do scope.size {
+                    def:DEFINEDVARS = scope.vars[scope.size - 1 -i];
+                    if def.typ.isMemMove && def.moved == false {
+                        varstr:&STR = toSTR def.name.ptr;
+                        node.strs[node.size] = &varstr;
+                        node.size = node.size + 1;
+                        if node.size == node.reserved {
+                            zavolej node.reallocStrs;
+                        }
+                    }
+                }
+                ast.add &node;
+        }
+        else if ast.type == AstType.AstAssignment {
+            if this.process.enableDeducer {
+                if ast.children[0].type == AstType.AstVariable {
+                    token:TOKEN = this.process.tokens[ast.children[0].tokensStart];
+                    strname:&STR = toSTR token.value;
+                    if (this.scope.isDefined strname) == false {
+                        vardef:&DEFINEDVARS = new DEFINEDVARS;
+                        vardef.moved = false;
+                        vardef.name = &strname;
+                        vardef.typ = this.process.deduceType ast.children[1], this.scope;
+                        this.scope.define &vardef;
+
+                        // if on right is new call
+                        if ast.children[1].type == AstType.AstNew {
+                            vardef.typ.isMemMove = true;
+                        }
+                        else if ast.children[1].type == AstType.AstFunctionCall {
+                            //try to deduce type
+                            deducedType:&TYPE = this.process.deduceType ast.children[1], this.scope;
+                            if deducedType.isMemMove {
+                                vardef.typ.isMemMove = true;
+                            }
+                        }
+
+                    }
+                }
+                else if ast.children[0].type == AstType.AstVariableDeclaration {
+                    token:TOKEN = this.process.tokens[ast.children[0].children[0].tokensStart];
+                    strname:&STR = toSTR token.value;
+                    if (this.scope.isDefined strname) == false {
+                        vardef:&DEFINEDVARS = new DEFINEDVARS;
+                        vardef.moved = false;
+                        vardef.name = &strname;
+                        vardef.typ = generateType ast.children[0].children[1], this.process.tokens;
+                        this.scope.define &vardef;
+                        
+                        if ast.children[1].type == AstType.AstNew {
+                            vardef.typ.isMemMove = true;
+                        }
+                        else if ast.children[1].type == AstType.AstFunctionCall {
+                            //try to deduce type
+                            deducedType:&TYPE = this.process.deduceType ast.children[1], this.scope;
+                            if deducedType.isMemMove {
+                                vardef.typ.isMemMove = true;
+                            }
+                        }
+                    }
+                }
+                else {
+                    this.testRecursive ast.children[0], ast;
+                }
+            }
+            this.testRecursive ast.children[1], ast;
+        }
+        else if ast.type == AstType.AstVariableDeclaration {
+            token:TOKEN = this.process.tokens[ast.children[0].tokensStart];
+            strname:&STR = toSTR token.value;
+            vardef:&DEFINEDVARS = new DEFINEDVARS;
+            vardef.moved = false;
+            vardef.name = &strname;
+            vardef.typ = generateType ast.children[1], this.process.tokens;
+
+            this.scope.define &vardef;
+        }
+        // if its if create scope and recurse
+        else if ast.type == AstType.AstIf {
+            zavolej this.scopePush;
+            this.testRecursive ast.children[1], ast;
+            zavolej this.scopePop;
+            pos:int = 2;
+            while pos < ast.size -1 {
+                zavolej this.scopePush;
+                this.testRecursive ast.children[pos +1], ast;
+                zavolej this.scopePop;
+                pos = pos + 2;
+            }
+            if pos < ast.size {
+                zavolej this.scopePush;
+                this.testRecursive ast.children[pos], ast;
+                zavolej this.scopePop;
+            }
+        }
+        else if ast.type == AstType.AstWhile {
+            this.loopSafeScope = this.scope;
+            zavolej this.scopePush;
+            this.testRecursive ast.children[1], ast;
+            zavolej this.scopePop;
+        }
+        else if ast.type == AstType.AstRangeFor {
+            this.loopSafeScope = this.scope;
+            zavolej this.scopePush;
+            this.testRecursive ast.children[0], ast;
+            this.testRecursive ast.children[2], ast;
+            zavolej this.scopePop;
+        }
+        else if ast.type == AstType.AstUnary {
+            if ast.operand == AstOperandType.MemMove {
+                if ast.children[0].type == AstType.AstVariable {
+                    token:TOKEN = this.process.tokens[ast.children[0].tokensStart];
+                    strname:&STR = toSTR token.value;
+
+                    onScope:bool = false;
+                    for i:int -> 0 do this.scope.size {
+                        def:DEFINEDVARS = this.scope.vars[this.scope.size - 1 - i];
+                        if ptrEqual def.name.ptr, strname.ptr{
+                            def.moved = true;
+                            onScope = true;
+                            break;
+                        }
+                    }
+
+                    if onScope == false {
+                        def:&DEFINEDVARS = new DEFINEDVARS;
+                        def.name = &strname;
+                        typ = this.scope.getType strname;
+                        def.typ = zavolej typ.copy;
+                        def.moved = true;
+                        this.scope.define &def;
+                    }
+                }
+            }
+            this.testRecursive ast.children[0], ast;
+        }
+        else if ast.type == AstType.AstFlow {
+            if ast.size > 0 {
+                this.testRecursive ast.children[0], ast;
+            }
+            token:TOKEN = this.process.tokens[ast.tokensStart];
+            if token.type == TokenType.KeyReturn {
+
+                node:&NODE = new NODE;
+                zavolej node.init;
+                node.type = AstType.AstDestruct;
+                node.strs = new &STR, 2;
+                node.reserved = 2;
+
+                scope:SCOPE = this.scope;
+                while scope != this.safeScope {
+                    for i:int -> 0 do scope.size {
+                        def:DEFINEDVARS = scope.vars[scope.size - 1 -i];
+                        if def.typ.isMemMove {
+                            getDef:DEFINEDVARS = this.scope.get def.name.ptr;
+                            if getDef.moved == false {
+                                varstr:&STR = toSTR def.name.ptr;
+                                node.strs[node.size] = &varstr;
+                                node.size = node.size + 1;
+                                if node.size == node.reserved {
+                                    zavolej node.reallocStrs;
+                                }
+                            }
+                        }
+                    }
+                    scope = scope.parent;
+                }
+                parentAst.addBeforeNode ast, &node;
+            } 
+            else if token.type == TokenType.KeyBreak || token.type == TokenType.KeyContinue  {
+                node:&NODE = new NODE;
+                zavolej node.init;
+                node.type = AstType.AstDestruct;
+                node.strs = new &STR, 2;
+                node.reserved = 2;
+
+                scope:SCOPE = this.scope;
+                while scope != this.loopSafeScope && scope != this.safeScope {
+                    for i:int -> 0 do scope.size {
+                        def:DEFINEDVARS = scope.vars[scope.size - 1 -i];
+                        if def.typ.isMemMove {
+                            getDef:DEFINEDVARS = this.scope.get def.name.ptr;
+                            if getDef.moved == false {
+                                varstr:&STR = toSTR def.name.ptr;
+                                node.strs[node.size] = &varstr;
+                                node.size = node.size + 1;
+                                if node.size == node.reserved {
+                                    zavolej node.reallocStrs;
+                                }
+                            }
+                        }
+                    }
+                    scope = scope.parent;
+                }
+                parentAst.addBeforeNode ast, &node;
+            }
+        }
+        else if ast.type == AstType.AstFunctionCall {
+            for i:int -> 1 do ast.size {
+                this.testRecursive ast.children[i], ast;
+            }
+        }
+    }
+}

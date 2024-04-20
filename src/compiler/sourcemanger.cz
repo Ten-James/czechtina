@@ -1,0 +1,144 @@
+package czechtina::compiler::sourcemanager;
+use czechtina::compiler;
+use std;
+use std::str;
+use std::paths;
+use std::args;
+use czechtina::parser::ast;
+use czechtina::parser::programAST;
+use czechtina::lexer::token;
+use czechtina::optimalization::borrowchecker;
+use czechtina::optimalization::typeChecker;
+
+struct SOURCEMANAGER {
+    sources:&pointer<&COMPILEPROCESS>;
+    size:int;
+    reserved:int;
+    enableDeducer:bool;
+
+    init size:int, enableDeducer:bool { void
+        this.sources = new &COMPILEPROCESS, size;
+        this.size = 0;
+        this.reserved = size;
+        this.enableDeducer = enableDeducer;
+    }
+
+    addSource path:STR { void
+        if this.size == this.reserved {
+            throw "No more space for sources";
+        }
+
+        source:&COMPILEPROCESS = new COMPILEPROCESS;
+        source.init path, this.enableDeducer;
+        this.sources[this.size] = &source;
+        this.size += 1;
+    }
+
+    print { void
+        for i:int -> 0 do this.size {
+            source:COMPILEPROCESS = this.sources[i];
+            source.sources = this.sources;
+            source.sSize = this.size;
+        }
+        foundMain:int = 0;
+        for i:int -> 0 do this.size {
+            proccess:COMPILEPROCESS = this.sources[i];
+            print proccess.filePath.ptr;
+            if proccess.program != 0 {
+                prg:PROGRAMAST = proccess.program;
+                if prg.main != 0 {
+                    foundMain += 1;
+                }
+                if prg.packageName == 0 {
+                    println "\tNo package name found";
+                }   
+                else {
+                    println "\tPackage: ", prg.packageName.ptr;
+                }
+            }
+            else {
+                throw "No program found in source";
+            }
+        }
+        println "foundMain: ", foundMain;
+
+    }
+
+
+    compile buildDir:pointer<char> { void
+        if (dirExist buildDir) == false {
+             createDir buildDir;
+        }
+
+        for i:int -> 0 do this.size {
+            source:COMPILEPROCESS = this.sources[i];
+            source.sources = this.sources;
+            source.sSize = this.size;
+        }
+
+        for i:int -> 0 do this.size {
+            proccess:COMPILEPROCESS = this.sources[i];
+            checker:&TypeChecker = new TypeChecker;
+            checker.process = proccess;
+            if proccess.program != 0 {
+                prg:PROGRAMAST = proccess.program;
+                for j:int -> 0 do prg.sSize {
+                    checker.testStructLeak prg.strcts[j];
+                }
+                for j:int -> 0 do prg.fSize {
+                    checker.testFunctionLeak prg.functions[j];
+                }
+                if prg.main != 0 {
+                    checker.testFunctionLeak prg.main;
+                }
+            }
+            
+        }
+
+        for i:int -> 0 do this.size {
+            proccess:COMPILEPROCESS = this.sources[i];
+            //println "-----------------";
+            //printf "Source %s\n", proccess.filePath.ptr;
+            checker:&BorrowChecker = new BorrowChecker;
+            checker.shouldPrint = false;
+            checker.process = proccess;
+            if proccess.program != 0 {
+                prg:PROGRAMAST = proccess.program;
+                for j:int -> 0 do prg.sSize {
+                    checker.testStructLeak prg.strcts[j];
+                }
+                for j:int -> 0 do prg.fSize {
+                    checker.testFunctionLeak prg.functions[j];
+                }
+                if prg.main != 0 {
+                    checker.testFunctionLeak prg.main;
+                }
+            }
+            
+        }
+        for i:int -> 0 do this.size {
+            this.sources[i].compile buildDir;
+        }
+        println "All sources compiled";
+        for i:int -> 0 do this.size {
+            zavolej this.sources[i].printUnusedEnumsValue;
+        }
+        
+    }
+
+    compileBinary bin:pointer<char>, outputDir:pointer<char>, arg:ARGS { void
+        cmd:&STR = toSTR "cc -w ";
+        if arg.contains "--debug-flags" {
+            cmd.appendPtr "-ggdb -O0 ";
+        }
+        cmd.appendPtr "-o ";
+        cmd.appendPtr bin;
+        cmd.appendPtr " ";
+        cmd.appendPtr outputDir;
+        cmd.appendPtr "/main.c";
+
+        println cmd.ptr;
+        inC "system(cmd->ptr)";
+    }
+
+}

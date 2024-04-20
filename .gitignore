@@ -1,3 +1,10 @@
 ### Czechtina ###
 build/
 .czcache
+main
+*.bak
+czechtina
+czechtina-cz
+*.dSYM
+.DS_store
+.vscode/

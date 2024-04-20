@@ -1,0 +1,104 @@
+package czechtina::compiler::strcts;
+use czechtina::compiler::types;
+use czechtina::compiler::functions;
+use std;
+use std::str;
+use czechtina::parser::ast;
+
+
+struct STRCTPROP {
+    name: &STR;
+    type: &TYPE;
+}
+
+struct STRCTFUN {
+    name: &STR;
+    ast: &FunctionNode;
+}
+
+struct STRCTENTRY {
+    name: &STR;
+
+    props: &pointer<&STRCTPROP>;
+    pSize: int;
+    pCapacity: int;
+    funs: &pointer<&STRCTFUN>;
+    fSize: int;
+    fCapacity: int;
+
+    init {void
+        this.props = new &STRCTPROP, 10;
+        this.pSize = 0;
+        this.pCapacity = 10;
+        this.funs = new &STRCTFUN, 10;
+        this.fSize = 0;
+        this.fCapacity = 10;
+    }
+
+    addProp name:&STR, type:&TYPE { void
+        if this.pSize == this.pCapacity {
+            this.pCapacity *= 2;
+            this.props = inC "realloc(this->props, this->pCapacity * sizeof(STRCTPROP))";
+        }
+        this.props[this.pSize] = new STRCTPROP;
+        this.props[this.pSize].name = &name;
+        this.props[this.pSize].type = &type;
+        this.pSize += 1;
+    }
+
+    addFun name:&STR, ast:&FunctionNode { void
+        if this.fSize == this.fCapacity {
+            this.fCapacity *= 2;
+            this.funs = inC "realloc(this->funs, this->fCapacity * sizeof(STRCTFUN))";
+        }
+        this.funs[this.fSize] = new &STRCTFUN;
+        this.funs[this.fSize].name = &name;
+        this.funs[this.fSize].ast = &ast;
+        this.fSize += 1;
+    }
+
+    containsProp name:pointer<char> { bool
+        for i:int -> 0 do this.pSize {
+            if ptrEqual this.props[i].name.ptr, name {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    getPropertyType name: pointer<char> { TYPE
+        for i:int -> 0 do this.pSize {
+            if ptrEqual this.props[i].name.ptr, name {
+                return this.props[i].type;
+            }
+        }
+        throw "Property not found";
+    }
+    
+    containsFun name: pointer<char> { bool
+        for i:int -> 0 do this.fSize {
+            if ptrEqual this.funs[i].name.ptr, name {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    getFunction name: pointer<char> { STRCTFUN
+        for i:int -> 0 do this.fSize {
+            if ptrEqual this.funs[i].name.ptr, name {
+                return this.funs[i];
+            }
+        }
+        throw "Function not found";
+    }
+
+    getFunctionReturnType name: pointer<char> { TYPE
+        for i:int -> 0 do this.fSize {
+            if ptrEqual this.funs[i].name.ptr, name {
+                return this.funs[i].ast.returnType;
+            }
+        }
+        throw "Function not found";
+    }
+}

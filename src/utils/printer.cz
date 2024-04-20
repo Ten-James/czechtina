@@ -1,22 +1,95 @@
-package czechtina::utils::printer
+package czechtina::utils::printer;
 
-use std
-use czechtina::lexer::token
+use std;
+use std::args;
+use czechtina::lexer::token;
+use czechtina::parser::ast;
+use czechtina::parser::programAST;
+use czechtina::compiler::functions;
 
 
-printTokens arr:ARR { void
-    for i -> 0 do arr.size {
-        token:TOKEN
-        inC "token = ((void**)arr->arr)[i]"
-        print "{ "
-        printTokenType token.type 
-        print  ", col:", token.col, ", line:", token.line
+printUsage arg:ARGS { void
+    println "Usage:";
+    printf "  %s [-v] [-h] [--disable-deducer] <filepath> [--src <path>] [-o <path>] [-backup]\n", arg.argv[0];
+    println "Options:";
+    println "  -v, --version        Print version";
+    println "  -h, --help           Print this help";
+    println "  --disable-deducer    Disable type deducer";
+    println "  --src <path>         Set source path";
+    println "  -o <path>            Set binary output path";
+    println "  -backup              Automatic backup output";
+    
+}
 
-        if token.type == TokenType.Number ->
-            printf ", value: %d", token.value
-        else if token.type == TokenType.Identifier || token.type == TokenType.String ->
-            printf  ", value: %s", token.value
 
-        println " }"
+
+
+#depricated
+printTokens arr:pointer<TOKEN>, from:int, to:int { void
+    println "Tokens:";
+    for i:int -> from do to {
+        token:TOKEN = arr[i];
+        printf "%4d: ", i;
+        print "{ ";
+        printTokenType token.type;
+        print  ", col:", token.col, ", line:", token.line;
+
+        if token.type == TokenType.Number {
+            printf ", value: %d", token.nValue;
+        }
+        else if token.type == TokenType.Character {
+            printf ", value: [%c]%d", token.nValue, token.nValue;
+        }
+        else if token.type == TokenType.Identifier || token.type == TokenType.String {
+            printf  ", value: %s", token.value;
+        }
+
+        println " }";
     }
+    println "-------------------------------------------";
+}
+
+// todo fix if file starts with \n
+#depricated
+printError pos:int, tokens:pointer<TOKEN>, text:pointer<char>, message:pointer<char> { void
+    old:FileStream;
+    inC "old = czStdOut";
+    inC "czStdOut = stderr";
+    token:TOKEN;
+    token = tokens[pos];
+    printf "Error at line %d, col %d: %s\n", token.line, token.col, message;
+
+    textpos:int = 0;
+
+    for i:int -> 0 do token.line - 2 {
+        textpos++;
+        while text[textpos] != '\n' && text[textpos] != 0 {
+            textpos++;
+        }        
+    }
+
+    textpos++;
+    while text[textpos] != '\n' && text[textpos] != 0 {
+        print text[textpos];
+        textpos++;
+    }
+    println "";
+    textpos++;
+    while text[textpos] != '\n' && text[textpos] != 0 {
+        print text[textpos];
+        textpos++;
+    }
+    println "";
+    for i:int -> 0 do token.col - 1 {
+        print " ";
+    }
+    println "^";
+    textpos++;
+    while text[textpos] != '\n' && text[textpos] != 0 {
+        print text[textpos];
+        textpos++;
+    }
+    println "";
+    println "-------------------------------------------";
+    inC "czStdOut = old";
 }

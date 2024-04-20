@@ -1,0 +1,43 @@
+package std::args;
+use std;
+use std::str;
+
+struct ARGS {
+    argc: int;
+    argv: pointer<pointer<char>>;
+
+    init argc:int, argv:pointer<pointer<char>> { void
+        this.argc = argc;
+        this.argv = argv;
+    }
+
+    contains name:pointer<char> { bool
+        for i:int -> 0 do this.argc {
+            if ptrEqual this.argv[i], name {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    getName name:pointer<char> { pointer<char>
+        for i:int -> 0 do this.argc - 1 {
+            if ptrEqual this.argv[i], name {
+
+                return this.argv[i+1];
+            }
+        }
+        return "";
+    }
+
+    firstUnNamed { pointer<char>
+        for i:int -> 1 do this.argc {
+            if this.argv[i][0] != '-' {
+                if this.argv[i-1][0] != '-' {
+                    return this.argv[i];
+                }
+            }
+        }
+        return "";
+    }
+}

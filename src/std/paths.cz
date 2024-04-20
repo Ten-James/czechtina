@@ -1,0 +1,25 @@
+package std::paths;
+use c::dirent;
+use c::sys::stat;
+
+
+dirExist pathName:pointer<char> { bool
+    inC " 
+        DIR *dir = opendir(pathName);
+        if (dir) {
+            closedir(dir);
+            return true;
+        } else {
+            return false;
+        }
+    ";
+}
+createDir pathName:pointer<char> { bool
+    inC "
+        if (mkdir(pathName, 0777) == 0) {
+            return true;
+        } else {
+            return false;
+        }
+    ";
+}

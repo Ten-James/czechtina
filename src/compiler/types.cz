@@ -1,0 +1,181 @@
+package czechtina::compiler::types;
+use czechtina::parser::ast;
+use czechtina::lexer::token;
+use czechtina::utils::printer;
+use std;
+use std::str;
+
+struct TYPE {
+    variant:int;
+    name:&?STR;
+    dereference:&?TYPE;
+    isMemMove:bool;
+    isOptional:bool;
+
+    printType { void
+        if this == 0 {
+            throw "invalid type to print";
+        }
+        if this.isMemMove {
+            print "&";
+        }
+        if this.isOptional {
+            print "Optional<";
+        }
+        if this.variant == TypeVariant.TypeVoid {
+            print "void";
+        } else if this.variant == TypeVariant.TypeChar {
+            print "char";
+        } else if this.variant == TypeVariant.TypeInt {
+            print "int";
+        } else if this.variant == TypeVariant.TypeDouble {
+            print "double";
+        } else if this.variant == TypeVariant.TypeBool {
+            print "bool";
+        } else if this.variant == TypeVariant.TypePointer {
+            print "Pointer<";
+            zavolej this.dereference.printType;
+            print ">";
+        } else if this.variant == TypeVariant.TypeStruct {
+            print "Struct<";
+            print this.name.ptr;
+            print ">";
+        }
+
+        if this.isOptional {
+            print ">";
+        }
+    }
+
+    toC { void
+        if this == 0 {
+            throw "invalid type to print";
+        }
+        if this.variant == TypeVariant.TypeVoid {
+            print "void";
+        } else if this.variant == TypeVariant.TypeChar {
+            print "char";
+        } else if this.variant == TypeVariant.TypeInt {
+            print "int";
+        } else if this.variant == TypeVariant.TypeDouble {
+            print "double";
+        } else if this.variant == TypeVariant.TypeBool {
+            print "bool";
+        } else if this.variant == TypeVariant.TypePointer {
+            zavolej this.dereference.toC;
+            print "*";
+        } else if this.variant == TypeVariant.TypeStruct {
+            print this.name.ptr;
+            print "*";
+        }
+    }
+
+    toSTR { &STR
+        str:&STR = new STR;
+        str.alloc 10;
+
+        this.appendSTR str;
+        return &str;
+    }
+    appendSTR str:STR { void
+        if this.isMemMove {
+            str.appendPtr "&";
+        }
+        if this.isOptional {
+            str.appendPtr "?";
+        }
+
+        if this.variant == TypeVariant.TypeVoid {
+            str.appendPtr "void";
+        } else if this.variant == TypeVariant.TypeChar {
+            str.appendPtr "char";
+        } else if this.variant == TypeVariant.TypeInt {
+            str.appendPtr "int";
+        } else if this.variant == TypeVariant.TypeDouble {
+            str.appendPtr "double";
+        } else if this.variant == TypeVariant.TypeBool {
+            str.appendPtr "bool";
+        } else if this.variant == TypeVariant.TypePointer {
+            str.appendPtr "Pointer<";
+            this.dereference.appendSTR str;
+            str.appendPtr ">";
+        } else if this.variant == TypeVariant.TypeStruct {
+            str.appendPtr this.name.ptr;
+        } 
+    }
+
+    copy { &TYPE
+        typ:&TYPE = new TYPE;
+        typ.variant = this.variant;
+        if this.name != 0 -> typ.name = zavolej this.name.copy;
+        else -> typ.name = 0;
+        typ.isMemMove = this.isMemMove;
+        typ.isOptional = this.isOptional;
+        if this.dereference != 0 {
+            typ.dereference = zavolej this.dereference.copy;
+        }
+        return &typ;
+    }
+}
+
+// GENERATE TYPE FROM ASTTYPE NODE
+generateType ast:NODE, tokens:pointer<TOKEN> { &TYPE
+    if ast == 0 {
+        throw "Invalid input to generateType";
+    }
+    childs:pointer<NODE>;
+    inC "childs = (NODE**)ast->children";
+    if ast.type == AstType.AstType {
+        token:TOKEN = tokens[ast.tokensStart];
+
+        if token.type == TokenType.Ampersand {
+            typ:&TYPE = generateType childs[0], tokens;
+            typ.isMemMove = true;
+            return &typ;
+        }
+
+        if token.type == TokenType.QuestionMark {
+            typ:&TYPE = generateType childs[0], tokens;
+            typ.isOptional = true;
+            return &typ;
+        }
+
+        typ:&TYPE = new TYPE;
+
+        if token.type == TokenType.TypeVoid {
+            typ.variant = TypeVariant.TypeVoid;
+        } else if token.type == TokenType.TypeChar {
+            typ.variant = TypeVariant.TypeChar;
+        } else if token.type == TokenType.TypeInt {
+            typ.variant = TypeVariant.TypeInt;
+        } else if token.type == TokenType.TypeDecimal {
+            typ.variant = TypeVariant.TypeDouble;
+        } else if token.type == TokenType.Identifier {
+            typ.variant = TypeVariant.TypeStruct;
+            typ.name = toSTR token.value;
+        } else if token.type == TokenType.TypePointer {
+            typ.variant = TypeVariant.TypePointer;
+            typ.dereference = generateType childs[0], tokens;
+        } else if token.type == TokenType.TypeBool {
+            typ.variant = TypeVariant.TypeBool;
+        } else {
+            println token.type;
+            throw "Unknown type";
+        }
+
+        return &typ;
+    }
+
+    throw "Invalid input to generateType";
+}
+
+
+enum TypeVariant {
+    TypeVoid,
+    TypeBool,
+    TypeChar,
+    TypeInt,
+    TypeDouble,
+    TypePointer,
+    TypeStruct
+}

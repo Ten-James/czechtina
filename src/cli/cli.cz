@@ -1,0 +1,115 @@
+package czechtina::cli;
+use czechtina::cli::readConfig;
+use std;
+use std::str;
+use std::files;
+use std::args;
+use czechtina::compiler::sourcemanager;
+use czechtina::utils::printer;
+use czechtina::utils::getFiles;
+
+cli arg:&ARGS {int
+    if arg.argc < 2 {
+        if fileExists ".buildczech" {
+            readConfig arg.argv[0];
+            return 0;
+        }
+
+        printf "Usage: %s <file>\n", arg.argv[0];
+        throw "invalid arguments";
+    }
+
+    deducer:bool = true;
+
+    if arg.contains "-h" {
+        printUsage arg;
+        return 0;
+    }
+    if arg.contains "-v" {
+        version = "0.9.1";
+        printf "Czechtina v%s\n", version;
+        return 0;
+    }
+
+    if arg.contains "--disable-deducer" {
+        deducer = false;
+    }
+
+    outputDir:pointer<char> = "build";
+
+    output:pointer<char> = "main";
+
+    if arg.contains "-o" {
+        output = arg.getName "-o";
+    }
+
+    if arg.contains "--output-dir" {
+        outputDir = arg.getName "--output-dir";
+    }
+    
+    if arg.contains "--src" {
+    
+        filePath:&STR = toSTR arg.getName "--src";
+        if filePath.size < 2 {
+            filePath.appendPtr ".";
+        }
+
+        printf "Reading files from %s\n", filePath.ptr;
+
+        files:&FILES = new FILES;
+        zavolej files.init;
+        files.readDir filePath.ptr;
+        manager:&SOURCEMANAGER = new SOURCEMANAGER;
+        manager.init files.size, deducer;
+
+        for i:int -> 0 do files.size {
+            //printf "Adding file %s\n", files.arr[i].ptr;
+            manager.addSource files.arr[i];
+        }
+        //manager.print;
+        manager.compile outputDir;
+
+        if arg.contains "--no-binary" {
+            return 0;
+        }
+        if arg.contains "--backup" {
+            cmd:&STR = toSTR "cp ";
+            cmd.appendPtr output;
+            cmd.appendPtr " ";
+            cmd.appendPtr output;
+            cmd.appendPtr ".bak";
+            println cmd.ptr;
+            inC "system(cmd->ptr)";
+        }
+
+        manager.compileBinary output, outputDir, arg;
+        return 0;
+    }
+
+    manager:&SOURCEMANAGER = new SOURCEMANAGER;
+    manager.init 1, deducer;
+    file:&STR = toSTR zavolej arg.firstUnNamed;
+
+    if file.size < 2 {
+        throw "invalid file";
+    }
+
+    manager.addSource file;
+    manager.compile outputDir;
+
+    if arg.contains "--no-binary" {
+        return 0;
+    }
+
+    if arg.contains "--backup" {
+        cmd:&STR = toSTR "cp ";
+        cmd.appendPtr output;
+        cmd.appendPtr " ";
+        cmd.appendPtr output;
+        cmd.appendPtr ".bak";
+        println cmd.ptr;
+        inC "system(cmd->ptr)";
+    }
+    manager.compileBinary output, outputDir, arg;
+    return 0;
+} 

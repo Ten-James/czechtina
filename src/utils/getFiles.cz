@@ -1,0 +1,59 @@
+package czechtina::utils::getFiles;
+use std;
+use std::str;
+use c::dirent;
+use c::sys::stat;
+
+
+struct FILES {
+    arr:&pointer<&STR>;
+    size:int;
+    reserved:int;
+
+    init { void
+        this.arr = new &STR, 5;
+        this.size = 0;
+        this.reserved = 5;
+    }
+
+    append str:&STR { void
+        if this.size == this.reserved {
+            this.reserved *= 2;
+            this.arr = inC "realloc(this->arr, this->reserved * sizeof(STR))";
+        }
+        this.arr[this.size] = &str;
+        this.size += 1;
+    }
+
+    readDir dir:pointer<char> { void
+        inC "
+        struct dirent *entry;
+        struct stat statbuf;
+
+        DIR *directory = opendir(dir);
+
+        if (directory == NULL) {
+            return;
+        }
+        ";
+        while inC"(entry = readdir(directory)) != NULL" {
+            if inC"entry->d_name[0] == '.'" {
+                inC"continue";
+            }
+
+            str:&STR = toSTR dir;
+            str.appendPtr "/";
+            str.appendPtr inC "entry->d_name" as pointer<char>;
+
+            if inC"stat(str->ptr, &statbuf) == 0 && S_ISDIR(statbuf.st_mode)" {
+                this.readDir str.ptr;
+                inC"continue";
+            }  
+
+            if str.isEndingWith ".cz" {
+                this.append &str;
+            }
+        }
+
+    }
+}

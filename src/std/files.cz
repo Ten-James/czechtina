@@ -1,4 +1,4 @@
-package std::files
+package std::files;
 
 
 readFile path:pointer<char> { &pointer<char>
@@ -25,7 +25,7 @@ readFile path:pointer<char> { &pointer<char>
 
     fclose(file);
     return fileContent;
-    "
+    ";
 }
 
 writeFile path:pointer<char>, content:pointer<char> { bool
@@ -39,18 +39,29 @@ writeFile path:pointer<char>, content:pointer<char> { bool
     fprintf(file, \"%s\", content);
     fclose(file);
     return true;
-    "
+    ";
+}
+
+fileExists path:pointer<char> { bool
+    inC "
+    FILE *file = fopen(path, \"r\");
+    if (file == NULL) {
+        return false;
+    }
+    fclose(file);
+    return true;
+    ";
 }
 
 
 struct FILEWRITER {
-    path: pointer<char>
-    stream: pointer<void>
+    path: pointer<char>;
+    stream: pointer<void>;
 
     init path:pointer<char> { void
-        this.path = path
-        this.stream = 0
-        zavolej this.open
+        this.path = path;
+        this.stream = 0;
+        zavolej this.open;
     }
 
     open { bool
@@ -61,7 +72,7 @@ struct FILEWRITER {
             return false;
         }
         return true;
-        "
+        ";
     }
 
     write content:pointer<char> { bool
@@ -72,7 +83,7 @@ struct FILEWRITER {
         }
         fprintf(this->stream, \"%s\", content);
         return true;
-        "
+        ";
     }
 
     close { bool
@@ -83,7 +94,7 @@ struct FILEWRITER {
         }
         fclose(this->stream);
         return true;
-        "
+        ";
     }
 
     destruct { void
@@ -91,7 +102,7 @@ struct FILEWRITER {
         if (this->stream != NULL) {
             fclose(this->stream);
         }
-        "
+        ";
     }    
 
 }

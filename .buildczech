@@ -1,5 +1,21 @@
-// This is the build file of the project
-output = czechtina-cz
-buildDir = build
-main = src/main.cz
-src = src
+# anything is treated as comment only specific keywords are recognized at the beginning of the line
+
+# output file is whats the binary file will be called
+
+output=czechtina
+
+# outputDir is the directory where source c files are located
+
+outputDir=build
+
+# src is the source file that will be compiled
+
+src=src
+
+# if you want to compile with debug flags so you can use lldb
+
+debugFlags
+
+# backup means that the output file will be backed up before the new one is created
+
+backup

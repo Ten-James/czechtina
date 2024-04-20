@@ -1,0 +1,421 @@
+package czechtina::optimalization::typeChecker;
+use czechtina::compiler::types;
+use czechtina::parser::ast;
+use czechtina::compiler;
+use czechtina::parser::programAST;
+use czechtina::compiler::scopes;
+use czechtina::compiler::enums;
+use czechtina::compiler::strcts;
+use czechtina::compiler::functions;
+use czechtina::lexer::token;
+use czechtina::utils::error;
+use std;
+use std::str;
+
+
+isPrimitiveNumeric type:TYPE { bool
+    return 
+           type.variant == TypeVariant.TypeInt 
+        || type.variant == TypeVariant.TypeDouble 
+        || type.variant == TypeVariant.TypeChar
+        || type.variant == TypeVariant.TypeBool;
+}
+// cast t1 to type t2
+isCastAble t1:TYPE, t2:TYPE { bool
+    if (isPrimitiveNumeric t1) && (isPrimitiveNumeric t2) {
+        return true;
+    }
+    if t1.isMemMove != t2.isMemMove {
+        return false;
+    }
+    if t1.variant == TypeVariant.TypePointer && t2.variant == TypeVariant.TypePointer {
+        return isCastAble t1.dereference, t2.dereference;
+    }
+    if t1.variant == TypeVariant.TypeStruct && t2.variant == TypeVariant.TypeStruct {
+        return ptrEqual t1.name.ptr, t2.name.ptr;
+    }
+
+    return false;
+}
+
+struct TypeChecker {
+    process:COMPILEPROCESS;
+    scope:&SCOPE;
+    scopePop { void
+    // TODO destructInto 
+    // for now i leak some memory
+    // 
+        if this.scope.parent == 0 {
+            throw "Cant pop global scope in typechecker";
+        }
+        inC "this->scope = this->scope->parent";
+        //this.scope = this.scope.parent;
+    }
+
+    scopePush { void
+        scope:&SCOPE = new SCOPE;
+        zavolej scope.init;
+        //TODO DESTRUCT INTO
+        inC "scope->parent = this->scope ";
+        this.scope = &scope;
+    }
+
+    testFunctionLeak ast:FunctionNode { void
+        this.scope = new SCOPE;
+        zavolej this.scope.init;
+        zavolej this.scopePush;
+        pos:int = 0;
+        while pos < ast.ast.size - 2 {
+            this.testRecursive ast.ast.children[pos], ast.ast;
+            pos = pos + 1;
+        }
+
+        this.testRecursive ast.ast.children[ast.ast.size - 1], ast.ast;
+
+        zavolej this.scopePop;
+    }
+
+    testStructLeak strct:STRCTENTRY { void
+        for i:int -> 0 do strct.fSize {
+            this.scope = new SCOPE;
+            zavolej this.scope.init;
+            ast:FunctionNode = strct.funs[i].ast;
+            childs:pointer<NODE>;
+            inC "childs = (NODE**)strct->funs[i]->ast->ast->children";
+            zavolej this.scopePush;
+            thisStr:&STR = toSTR "this";
+            thisType:&TYPE = new TYPE;
+            thisType.name = toSTR strct.name.ptr;
+            thisType.variant = TypeVariant.TypeStruct;
+            thisVar:&DEFINEDVARS = new DEFINEDVARS;
+            thisVar.moved = ptrEqual ast.funName, "destruct";
+            thisVar.name = &thisStr;
+            thisVar.typ = &thisType;
+            this.scope.define &thisVar;
+            pos:int = 0;
+            while pos < ast.ast.size - 2 {
+                this.testRecursive childs[pos], ast.ast;
+                pos = pos + 1;
+            }
+            this.testRecursive childs[ast.ast.size - 1], ast.ast;
+            zavolej this.scopePop;
+        }
+    }
+
+    testRecursive ast:NODE, parentAst:NODE { void
+        if ast.type == AstType.AstLines {
+            curSize:int = ast.size;
+            for i:int -> 0 do curSize {
+                this.testRecursive ast.children[i], ast;
+            }
+        }
+        else if ast.type == AstType.AstCast {
+            this.testRecursive ast.children[1], ast;
+            lefType = this.process.deduceType ast.children[0], this.scope;
+            rigType = generateType ast.children[1], this.process.tokens;
+            if (isCastAble rigType, lefType) == false {
+                err:&Error = this.process.generateError ast.children[0].tokensStart;
+                err.message.appendPtr "Cast type mismatch";
+                err.secMessage.appendPtr "Expected ";
+                leftstr = zavolej lefType.toSTR;
+                err.secMessage.appendPtr leftstr.ptr;
+                err.secMessage.appendPtr " got ";
+                rightstr = zavolej rigType.toSTR;
+                err.secMessage.appendPtr rightstr.ptr;
+                err.print true;
+                throw "";
+            }
+        }
+        else if ast.type == AstType.AstAssignment {
+            if ast.children[0].type == AstType.AstVariable {
+                token:TOKEN = this.process.tokens[ast.children[0].tokensStart];
+                strname:&STR = toSTR token.value;
+                if (this.scope.isDefined strname) == false {
+                    vardef:&DEFINEDVARS = new DEFINEDVARS;
+                    vardef.moved = false;
+                    vardef.name = &strname;
+                    vardef.typ = this.process.deduceType ast.children[1], this.scope;
+                    this.scope.define &vardef;
+                    // if on right is new call
+                    if ast.children[1].type == AstType.AstNew {
+                        vardef.typ.isMemMove = true;
+                    }
+                    if ast.children[1].type != AstType.AstNew
+                        && ast.children[1].type != AstType.AstFunctionCall 
+                        && ast.children[1].operand != AstOperandType.MemMove {
+                        typ = vardef.typ;
+                        while 1 {
+                            typ.isMemMove = false;
+                            if typ.variant == TypeVariant.TypePointer {
+                                typ = typ.dereference;
+                            }
+                            else {
+                                break;
+                            }
+                        }
+                    }
+
+                }
+            }
+            else if ast.children[0].type == AstType.AstVariableDeclaration {
+                token:TOKEN = this.process.tokens[ast.children[0].children[0].tokensStart];
+                strname:&STR = toSTR token.value;
+                if (this.scope.isDefined strname) == false {
+                    vardef:&DEFINEDVARS = new DEFINEDVARS;
+                    vardef.moved = false;
+                    vardef.name = &strname;
+                    vardef.typ = generateType ast.children[0].children[1], this.process.tokens;
+                    this.scope.define &vardef;
+                }
+            }
+            else {
+                this.testRecursive ast.children[0], ast;
+            }
+            this.testRecursive ast.children[1], ast;
+
+            lefType = this.process.deduceType ast.children[0], this.scope;
+            rigType = this.process.deduceType ast.children[1], this.scope;
+            if ast.children[1].type != AstType.AstNew
+                && ast.children[1].type != AstType.AstFunctionCall 
+                && ast.children[1].operand != AstOperandType.MemMove
+            {
+                type:TYPE = rigType;
+                while 1 {
+                    type.isMemMove = false;
+                    if type.variant == TypeVariant.TypePointer {
+                        type = type.dereference;
+                    }
+                    else {
+                        break;
+                    }
+                }
+            }        
+
+            if (isCastAble rigType, lefType) == false {
+                if lefType.variant == TypeVariant.TypePointer && rigType.variant == TypeVariant.TypeInt {
+                    if ast.operand == AstOperandType.Plus {
+                        return;
+                    }
+                    else if ast.operand == AstOperandType.Minus {
+                        return;
+                    }
+                    else if ast.operand == AstOperandType.AsPlus {
+                        return;
+                    }
+                    else if ast.operand == AstOperandType.AsMinus {
+                        return;
+                    }
+                }
+
+                if ast.children[1].type == AstType.AstFunctionCall {
+                    if ptrEqual this.process.tokens[ast.children[1].children[0].tokensStart].value, "inC" {
+                        err:&Error = this.process.generateError ast.children[1].tokensStart;
+                        err.level = ErrorLevel.WARNING;
+                        err.message.appendPtr "InC in assignment";
+                        err.print false;
+                        return;
+                    }
+                }
+
+                err:&Error = this.process.generateError ast.children[1].tokensStart;
+                err.level = ErrorLevel.WARNING;
+                err.message.appendPtr "Assignment type mismatch";
+                err.secMessage.appendPtr "Expected ";
+                leftstr = zavolej lefType.toSTR;
+                err.secMessage.appendPtr leftstr.ptr;
+                err.secMessage.appendPtr " got ";
+                rightstr = zavolej rigType.toSTR;
+                err.secMessage.appendPtr rightstr.ptr;
+                err.print true;
+            }
+        }
+        else if ast.type == AstType.AstVariableDeclaration {
+            token:TOKEN = this.process.tokens[ast.children[0].tokensStart];
+            strname:&STR = toSTR token.value;
+            vardef:&DEFINEDVARS = new DEFINEDVARS;
+            vardef.moved = false;
+            vardef.name = &strname;
+            vardef.typ = generateType ast.children[1], this.process.tokens;
+
+            this.scope.define &vardef;
+        }
+        // if its if create scope and recurse
+        else if ast.type == AstType.AstIf {
+            zavolej this.scopePush;
+            this.testRecursive ast.children[1], ast;
+            zavolej this.scopePop;
+            pos:int = 2;
+            while pos < ast.size -1 {
+                zavolej this.scopePush;
+                this.testRecursive ast.children[pos +1], ast;
+                zavolej this.scopePop;
+                pos = pos + 2;
+            }
+            if pos < ast.size {
+                zavolej this.scopePush;
+                this.testRecursive ast.children[pos], ast;
+                zavolej this.scopePop;
+            }
+        }
+        else if ast.type == AstType.AstWhile {
+            zavolej this.scopePush;
+            this.testRecursive ast.children[1], ast;
+            zavolej this.scopePop;
+        }
+        else if ast.type == AstType.AstRangeFor {
+            zavolej this.scopePush;
+            this.testRecursive ast.children[0], ast;
+            this.testRecursive ast.children[2], ast;
+            zavolej this.scopePop;
+        }
+        else if ast.type == AstType.AstUnary {
+            if ast.operand == AstOperandType.MemMove {
+                if ast.children[0].type == AstType.AstVariable {
+                    token:TOKEN = this.process.tokens[ast.children[0].tokensStart];
+                    strname:&STR = toSTR token.value;
+
+                    onScope:bool = false;
+                    for i:int -> 0 do this.scope.size {
+                        def:DEFINEDVARS = this.scope.vars[this.scope.size - 1 - i];
+                        if ptrEqual def.name.ptr, strname.ptr{
+                            def.moved = true;
+                            onScope = true;
+                            break;
+                        }
+                    }
+
+                    if onScope == false {
+                        def:&DEFINEDVARS = new DEFINEDVARS;
+                        def.name = &strname;
+                        typ = this.scope.getType strname;
+                        def.typ = zavolej typ.copy;
+                        def.moved = true;
+                        this.scope.define &def;
+                    }
+                }
+            }
+            this.testRecursive ast.children[0], ast;
+        }
+        else if ast.type == AstType.AstFlow {
+            if ast.size > 0 {
+                this.testRecursive ast.children[0], ast;
+            }
+            token:TOKEN = this.process.tokens[ast.tokensStart];
+        }
+        else if ast.type == AstType.AstFunctionCall {
+            fun:FunctionNode;
+            if ast.children[0].type == AstType.AstVariable {
+                token:TOKEN = this.process.tokens[ast.children[0].tokensStart];
+                if ptrEqual token.value, "new" {
+                    return;
+                }
+                else if ptrEqual token.value, "inC" {
+                    return;
+                }
+                else if ptrEqual token.value, "throw" {
+                    return;
+                }
+                else if ptrEqual token.value, "typeof" {
+                    return;
+                }
+                else if ptrEqual token.value, "sizeof" {
+                    return;
+                }
+                else if ptrEqual token.value, "printf" {
+                    return;
+                }
+                else if ptrEqual token.value, "print" {
+                    return;
+                }
+                else if ptrEqual token.value, "println" {
+                    return;
+                }
+                else if ptrEqual token.value, "hodnota" {
+                    return;
+                }
+                fun = this.process.getFunctionByName token.value;
+            }
+            else if ast.children[0].type == AstType.AstStructAccess {
+                accessChilds = ast.children[0].children;
+                type:&TYPE = this.process.deduceType accessChilds[0], this.scope;
+
+                if type.variant != TypeVariant.TypeStruct {
+                    throw "Cant access member of non struct";
+                }
+                
+                strct:STRCTENTRY = this.process.getStructByName type.name.ptr;
+
+
+                strctFun:STRCTFUN = strct.getFunction this.process.tokens[accessChilds[1].tokensStart].value;
+
+
+                fun = strctFun.ast;
+            }
+
+            if fun == 0 {
+                err:&Error = this.process.generateError ast.children[0].tokensStart;
+                err.message.appendPtr "Function not found";
+                err.print true;
+                throw "Function not found";
+            }
+
+            if fun.ast.size - 1 != ast.size {
+                pos = 0;
+                if fun.ast.size - 2 >= ast.size -1 {
+                    pos = ast.size -1;
+                }
+                else {
+                    pos = fun.ast.size - 1;
+                }
+                err:&Error = this.process.generateError ast.children[pos].tokensStart;
+                err.message.appendPtr "Function call arguments count mismatch";
+                err.secMessage.appendPtr "Expected ";
+                err.secMessage.appendInt fun.ast.size - 2;
+                err.secMessage.appendPtr " args got ";
+                err.secMessage.appendInt ast.size -1;
+                err.secMessage.appendPtr " args.";
+                err.print true;
+                throw ""; 
+            }
+            for i:int -> 0 do fun.variants[0].size {
+                strdefined = zavolej fun.variants[0].args[i].toSTR;
+                funCalledType:&TYPE = this.process.deduceType ast.children[i+1], this.scope;
+                
+                if  ast.children[i+1].operand != AstOperandType.MemMove
+                    && ast.children[i+1].type != AstType.AstFunctionCall 
+                {
+                    typ = funCalledType;
+                    while 1 {
+                        typ.isMemMove = false;
+                        if typ.variant == TypeVariant.TypePointer {
+                            typ = typ.dereference;
+                        }
+                        else {
+                            break;
+                        }
+                    }
+                }
+
+                strcalled = zavolej funCalledType.toSTR;
+                
+
+                if (isCastAble funCalledType, fun.variants[0].args[i]) == false {
+                    err:&Error = this.process.generateError ast.children[i+1].tokensStart;
+                    err.level = ErrorLevel.WARNING;
+                    err.message.appendPtr "Function call argument type mismatch";
+                    err.secMessage.appendPtr "Expected ";
+                    err.secMessage.appendPtr strdefined.ptr;
+                    err.secMessage.appendPtr " got ";
+                    err.secMessage.appendPtr strcalled.ptr;
+                    err.print true;
+                }
+            }
+
+
+
+            for i:int -> 1 do ast.size {
+                this.testRecursive ast.children[i], ast;
+            }
+        }
+    }
+}

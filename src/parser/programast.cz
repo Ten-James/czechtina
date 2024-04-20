@@ -1,0 +1,93 @@
+package czechtina::parser::programAST;
+use czechtina::compiler::functions;
+use czechtina::parser::ast;
+use czechtina::compiler::enums;
+use czechtina::compiler::strcts;
+use czechtina::compiler::types;
+use std::str;
+
+struct PROGRAMAST {
+    packageName:&?STR;
+
+    imports:&pointer<&STR>;
+    iSize:int;
+    iReserved:int;
+
+    enums:&pointer<&ENUM>;
+    eSize:int;
+    eReserved:int;
+
+    strcts:&pointer<&STRCTENTRY>;
+    sSize:int;
+    sReserved:int;
+
+
+    functions:&pointer<&FunctionNode>;
+    fSize:int;
+    fReserved:int;
+
+    main:&?FunctionNode;
+
+    init { void
+        this.imports = new &STR,10;
+        this.iSize = 0;
+        this.iReserved = 10;
+
+        this.functions = new &FunctionNode,5;
+        this.fSize = 0;
+        this.fReserved = 5;
+
+        this.enums = new &ENUM,5;
+        this.eSize = 0;
+        this.eReserved = 5;
+
+        this.strcts = new &STRCTENTRY,5;
+        this.sSize = 0;
+        this.sReserved = 5;
+
+        this.packageName = 0;
+
+        this.main = 0;
+    }
+
+    consumeStruct stru:&STRCTENTRY { void
+        if this.sSize == this.sReserved {
+            this.sReserved *= 2;
+            this.strcts = inC "realloc(this->strcts, this->sReserved * sizeof(STRCTENTRY*));";
+        }
+        this.strcts[this.sSize] = &stru;
+        this.sSize +=1;
+    }
+
+    consumeEnum en:&ENUM { void
+        if this.eSize == this.eReserved {
+            this.eReserved *= 2;
+            this.enums = inC "realloc(this->enums, this->eReserved * sizeof(ENUM*));";
+        }
+        this.enums[this.eSize] = &en;
+        this.eSize +=1;
+    }
+
+    consumeImport import:&STR { void
+        if this.iSize == this.iReserved {
+            this.iReserved *= 2;
+            this.imports = inC "realloc(this->imports, this->iReserved * sizeof(STR*));";
+        }
+        this.imports[this.iSize] = &import;
+        this.iSize +=1;
+    }
+
+    consumeFunction function:&FunctionNode { void
+        if this.fSize == this.fReserved {
+            this.fReserved *= 2;
+            this.functions = inC "realloc(this->functions, this->fReserved * sizeof(FunctionNode*));";
+        }
+        this.functions[this.fSize] = &function;
+        this.fSize +=1;
+    }
+
+    consumeMain main:&FunctionNode { void
+        this.main = &main;
+    }
+
+}

@@ -1,0 +1,1733 @@
+package czechtina::compiler;
+
+use czechtina::parser::ast;
+use czechtina::parser::programAST;
+use czechtina::lexer::token;
+use czechtina::lexer;
+use czechtina::parser;
+use czechtina::compiler::scopes;
+use czechtina::compiler::enums;
+use czechtina::compiler::strcts;
+use czechtina::compiler::functions;
+use czechtina::compiler::types;
+use czechtina::utils::printer;
+use czechtina::utils::levenshtein;
+use czechtina::utils::error;
+use std;
+use std::str;
+use std::files;
+
+preludeDeclare i:int {void
+    printf "extern void* czStdOut;\n";
+    printf "extern void* czStdIn;\n";
+    printf "typedef void* FileStream;\n";
+}
+
+preludeDefine i:int {void 
+    printf "void* czStdOut = 0;\n";
+    printf "void* czStdIn = 0;\n";
+    printf "typedef void* FileStream;\n";
+}
+
+
+struct TYPEDEFS {
+    name:&STR;
+    type:&TYPE;
+}
+
+
+struct COMPILEPROCESS {
+    debug:bool;
+    defs:&pointer<&TYPEDEFS>;
+    dSize:int;
+    dReserved:int;
+    filePath:&STR;
+    program:&?PROGRAMAST;
+    text:&?pointer<char>;
+    tokens:&?pointer<TOKEN>;
+    scope:&SCOPE;
+    enableDeducer:bool;
+    sources:?pointer<COMPILEPROCESS>;
+    sSize:int;
+
+    scopePop { void
+        //TODO destructInto 
+        scope:&SCOPE = this.scope;
+        if scope.parent == 0 {
+            throw "Cant pop global scope";
+        }
+        this.scope = scope.parent;
+        inC "free(scope)";
+    }
+
+    scopePush { void
+        scope:&SCOPE = new SCOPE;
+        zavolej scope.init;
+        scope.parent = this.scope;
+        this.scope = &scope;
+    }
+
+    init text:STR, enableDeducer:bool { void
+        this.filePath = zavolej text.copy;
+        this.text = readFile text.ptr;
+        tokens:ARR = lex this.text;
+        tokenSize:int = tokens.size;
+        this.defs = new &TYPEDEFS,1;
+        filestream:&TYPEDEFS = new TYPEDEFS;
+        filestream.name = toSTR "FileStream";
+        this.debug = false;
+
+        {
+            voidType:&TYPE = new TYPE;
+            voidType.variant = TypeVariant.TypeVoid;
+            pointerType:&TYPE = new TYPE;
+            pointerType.variant = TypeVariant.TypePointer;
+            pointerType.dereference = &voidType;
+
+            filestream.type = &pointerType;
+        }
+        this.defs[0] = &filestream;
+
+
+
+        this.dSize = 1;
+        this.dReserved = 1;
+        this.tokens = inC "(TOKEN**)tokens->arr";
+        parser:&PARSER = new PARSER;
+        parser.filePath = this.filePath.ptr;
+        parser.tokens = this.tokens;
+        parser.text = this.text;
+        parser.max = tokenSize;
+        this.program = zavolej parser.parse;
+
+
+        this.enableDeducer = enableDeducer;
+    }
+
+
+    generateError pos:int { &Error
+        err:&Error = new Error;
+        zavolej err.init;
+        err.pos = pos;
+        err.tokens = this.tokens;
+        err.text = this.text;
+        err.filePath = this.filePath.ptr;
+        err.pos = pos;
+        err.level = ErrorLevel.FATAL;
+        return &err;
+    }
+
+
+
+
+
+
+    isPackageImported name:pointer<char> { bool
+        for i:int -> 0 do this.program.iSize {
+            if ptrEqual this.program.imports[i].ptr, name {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    isFunctionDefined name:pointer<char>, pos:int {bool
+        for i:int -> 0 do this.program.fSize {
+            if ptrEqual this.program.functions[i].funName, name {
+                return true;
+            }
+        }
+
+        for i:int -> 0 do this.sSize {
+            for j:int -> 0 do this.sources[i].program.fSize {
+                if ptrEqual this.sources[i].program.functions[j].funName, name {
+                    if this.isPackageImported this.sources[i].program.packageName.ptr {
+                        return true;
+                    }
+                    zavolej this.printScope;
+                    err:&Error = this.generateError pos;
+                    err.message.appendPtr "Function not imported";
+                    err.secMessage.appendPtr "Package ";
+                    err.secMessage.appendPtr this.sources[i].program.packageName.ptr;
+                    err.secMessage.appendPtr " not imported";
+                    err.print true;
+                    throw "Package not imported";
+                }
+            }
+        }
+
+        cur:int = 100;
+        closest:pointer<char> = 0;
+        for i:int -> 0 do this.program.fSize {
+            dist:int = levenshteinDistance name, this.program.functions[i].funName;
+            if dist < cur {
+                cur = dist;
+                closest = this.program.functions[i].funName;
+            }
+        }
+        for i:int -> 0 do this.sSize {
+            for j:int -> 0 do this.sources[i].program.fSize {
+                dist:int = levenshteinDistance name, this.sources[i].program.functions[j].funName;
+                if dist < cur {
+                    cur = dist;
+                    closest = this.sources[i].program.functions[j].funName;
+                }
+            }
+        }
+        
+            zavolej this.printScope;
+            err:&Error = this.generateError pos;
+            err.level = ErrorLevel.ERROR;
+            err.message.appendPtr "Function not found";
+            err.secMessage.appendPtr "Did you mean ";
+            err.secMessage.appendPtr closest;
+            err.secMessage.appendPtr "?";
+            err.print true;
+            zavolej err.destruct;
+            inC "free(err)";
+
+
+        return false;
+    }
+
+    getFunctionByName ptr:pointer<char> { FunctionNode
+        for i:int -> 0 do this.program.fSize {
+            if ptrEqual this.program.functions[i].funName, ptr {
+                return this.program.functions[i];
+            }
+        }
+
+        for i:int -> 0 do this.sSize {
+            for j:int -> 0 do this.sources[i].program.fSize {
+                if ptrEqual this.sources[i].program.functions[j].funName, ptr {
+                    return this.sources[i].program.functions[j];
+                }
+            }
+        }
+
+        throw "Function not found";
+    }
+
+    isStructDefined name:pointer<char>, pos:int { bool
+        for i:int -> 0 do this.program.sSize {
+            if ptrEqual this.program.strcts[i].name.ptr, name {
+                return true;
+            }
+        }
+
+        for i:int -> 0 do this.sSize {
+            for j:int -> 0 do this.sources[i].program.sSize {
+                if ptrEqual this.sources[i].program.strcts[j].name.ptr, name {
+                    if this.isPackageImported this.sources[i].program.packageName.ptr {
+                        return true;
+                    }
+                    zavolej this.printScope;
+                    err:&Error = this.generateError pos;
+                    err.message.appendPtr "Struct not imported";
+                    err.secMessage.appendPtr "Package ";
+                    err.secMessage.appendPtr this.sources[i].program.packageName.ptr;
+                    err.secMessage.appendPtr " not imported";
+                    err.print true;
+                    throw "Package not imported";
+                }
+            }
+        }
+
+        return false;
+    }
+
+    getStructByName ptr:pointer<char> { STRCTENTRY
+        for i:int -> 0 do this.program.sSize {
+            if ptrEqual this.program.strcts[i].name.ptr, ptr {
+                return this.program.strcts[i];
+            }
+        }
+
+        for i:int -> 0 do this.sSize {
+            for j:int -> 0 do this.sources[i].program.sSize {
+                if ptrEqual this.sources[i].program.strcts[j].name.ptr, ptr {
+                    return this.sources[i].program.strcts[j];
+                }
+            }
+        }
+        throw "Struct not found";
+    }
+
+    getClosestStructByName ptr:pointer<char> { pointer<char>
+        cur:int = 100;
+        closest:pointer<char> = 0;
+        for i:int -> 0 do this.program.sSize {
+            dist:int = levenshteinDistance ptr, this.program.strcts[i].name.ptr;
+            if dist < cur {
+                cur = dist;
+                closest = this.program.strcts[i].name.ptr;
+            }
+        }
+        for i:int -> 0 do this.sSize {
+            for j:int -> 0 do this.sources[i].program.sSize {
+                dist:int = levenshteinDistance ptr, this.sources[i].program.strcts[j].name.ptr;
+                if dist < cur {
+                    cur = dist;
+                    closest = this.sources[i].program.strcts[j].name.ptr;
+                }
+            }
+        }
+        return closest;
+    }
+
+
+    isEnumDefined token:TOKEN, pos:int { bool
+        for i:int -> 0 do this.program.eSize {
+            if ptrEqual this.program.enums[i].name.ptr, token.value {
+                return true;
+            }
+        }
+
+        for i:int -> 0 do this.sSize {
+            for j:int -> 0 do this.sources[i].program.eSize {
+                if ptrEqual this.sources[i].program.enums[j].name.ptr, token.value {
+                    if this.isPackageImported this.sources[i].program.packageName.ptr {
+                        return true;
+                    }
+                    zavolej this.printScope;
+                    err:&Error = this.generateError pos;
+                    err.message.appendPtr "Enum not imported";
+                    err.secMessage.appendPtr "Package ";
+                    err.secMessage.appendPtr this.sources[i].program.packageName.ptr;
+                    err.secMessage.appendPtr " not imported";
+                    err.print true;
+                    throw "Package not imported";
+                }
+            }
+        }
+
+        return false;
+    }
+
+    getEnumByName ptr:pointer<char> { ENUM
+        for i:int -> 0 do this.program.eSize {
+            if ptrEqual this.program.enums[i].name.ptr, ptr {
+                return this.program.enums[i];
+            }
+        }
+
+        for i:int -> 0 do this.sSize {
+            for j:int -> 0 do this.sources[i].program.eSize {
+                if ptrEqual this.sources[i].program.enums[j].name.ptr, ptr {
+                    return this.sources[i].program.enums[j];
+                }
+            }
+        }
+
+        throw "Enum not found";
+    }
+
+    isTypeDefined name:pointer<char> { bool
+        for i:int -> 0 do this.dSize {
+            if ptrEqual this.defs[i].name.ptr, name {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    geTypeByName name:pointer<char> { TYPE
+        for i:int -> 0 do this.dSize {
+            if ptrEqual this.defs[i].name.ptr, name {
+                return this.defs[i].type;
+            }
+        }
+        throw "Type not found";
+    }
+
+    deduceType ast:NODE, scope:SCOPE { &TYPE
+        childs:pointer<NODE>;
+        inC "childs = (NODE**)ast->children";
+        tokens:pointer<TOKEN> = this.tokens;
+
+        if ast.type == AstType.AstStructAccess {
+            if ast.children[0].type == AstType.AstVariable {
+                if this.isEnumDefined tokens[ast.children[0].tokensStart], ast.tokensStart {
+                    en:ENUM = this.getEnumByName tokens[ast.children[0].tokensStart].value;
+                    for i:int -> 0 do en.size {
+                        if ptrEqual en.values[i].name.ptr, tokens[ast.children[1].tokensStart].value {
+                            type:&TYPE = new TYPE;
+                            type.variant = TypeVariant.TypeInt;
+                            return &type;
+                        }
+                    }
+                    zavolej this.printScope;
+                    err:&Error = this.generateError ast.children[1].tokensStart;
+                    err.message.appendPtr "Enum doesnt contain value ";
+                    err.message.appendPtr tokens[ast.children[1].tokensStart].value;
+                    err.print true;
+                    throw "Enum doesnt contain value";
+                }
+            }            
+
+            strType:&TYPE = this.deduceType childs[0], scope;
+            namePtr:pointer<char> = strType.name.ptr;
+
+            if strType.variant != TypeVariant.TypeStruct {
+                zavolej this.printScope;
+                err:&Error = this.generateError ast.tokensStart;
+                err.message.appendPtr "Not a struct ";
+                err.message.appendPtr namePtr;
+                err.print true;
+                throw "Not a struct";
+            }
+            isDefined:bool = this.isStructDefined namePtr, ast.tokensStart;
+            if isDefined == false {
+                zavolej this.printScope;
+                err:&Error = this.generateError ast.tokensStart;
+                err.message.appendPtr "Undefined struct ";
+                err.message.appendPtr namePtr;
+                err.print true;
+                throw "Undefined struct";
+            }
+            strct:STRCTENTRY = this.getStructByName namePtr;
+            propName:pointer<char> = tokens[childs[1].tokensStart].value;
+            if strct.containsProp propName {
+                type = strct.getPropertyType propName;
+                return zavolej type.copy;
+            }
+
+            zavolej this.printScope;
+            inC "czStdOut = stdout";
+            err:&Error = this.generateError ast.tokensStart;
+            err.message.appendPtr "Property not found ";
+            err.message.appendPtr namePtr;
+            err.message.appendPtr ".";
+            err.message.appendPtr propName;
+            err.print true;
+            throw "Property not found";
+
+        }
+
+        // if access get type of child[0]
+
+        if ast.type == AstType.AstArrayAccess {
+            arr:&TYPE = this.deduceType childs[0], scope;
+            if arr.variant != TypeVariant.TypePointer {
+                zavolej this.printScope;
+                err:&Error = this.generateError ast.tokensStart;
+                err.message.appendPtr "Not a pointer ";
+                err.message.appendPtr arr.name.ptr;
+                err.print true;
+                throw "Not an array";
+            }
+            //TODO DESTRUCTINTO
+            return zavolej arr.dereference.copy;
+        }
+
+        // if variable get type of var in scope
+
+        if ast.type == AstType.AstVariable {
+            token:TOKEN = tokens[ast.tokensStart];
+            strname:&STR = toSTR token.value;
+            if (scope.isDefined strname) == false {
+                err:&Error = this.generateError ast.tokensStart;
+                err.message.appendPtr "Undefined variable ";
+                err.message.appendPtr strname.ptr;
+                closest:pointer<char> = scope.getClosestVariable strname.ptr, 100;
+                err.secMessage.appendPtr "Did you mean ";
+                err.secMessage.appendPtr closest;
+                err.secMessage.appendPtr "?";
+
+                err.print true;
+                throw "Undefined variable enable deducer";
+            }
+            type:TYPE = scope.getType strname;
+            return zavolej type.copy;
+        }
+
+
+        // if new and size == 1 -> get type of child[0]
+        if ast.type == AstType.AstNew {
+            if ast.size == 1 {
+                type:&TYPE = generateType childs[0], this.tokens;
+                type.isMemMove = true;
+                return &type;
+            }
+            else {
+                type:&TYPE = generateType childs[0], this.tokens;
+                pointerType:&TYPE = new TYPE;
+                pointerType.variant = TypeVariant.TypePointer;
+                pointerType.dereference = &type;
+                pointerType.isMemMove = true;
+                return &pointerType;
+            }
+        }
+
+        // if literal get type of literal
+        if ast.type == AstType.AstLiteral {
+            token:TOKEN = tokens[ast.tokensStart];
+            if token.type == TokenType.String {
+                type:&TYPE = new TYPE;
+                type.variant = TypeVariant.TypePointer;
+                type.dereference = new TYPE;
+                type.dereference.variant = TypeVariant.TypeChar;
+                return &type;
+            }
+            else if token.type == TokenType.Number {
+                type:&TYPE = new TYPE;
+                type.variant = TypeVariant.TypeInt;
+                return &type;
+            }
+            else if token.type == TokenType.BoolTrue || token.type == TokenType.BoolFalse {
+                type:&TYPE = new TYPE;
+                type.variant = TypeVariant.TypeBool;
+                return &type;
+            }
+            else if token.type == TokenType.Character {
+                type:&TYPE = new TYPE;
+                type.variant = TypeVariant.TypeChar;
+                return &type;
+            }
+            throw "Unknown literal";
+        }
+
+        // if function call get return type of function
+        if ast.type == AstType.AstFunctionCall {
+            token:TOKEN = tokens[childs[0].tokensStart];
+            if childs[0].type == AstType.AstVariable {
+                if ptrEqual token.value, "typeof" {
+                    type:&TYPE = new TYPE;
+                    type.variant = TypeVariant.TypePointer;
+                    type.dereference = new TYPE;
+                    type.dereference.variant = TypeVariant.TypeChar;
+                    return &type;
+                }
+                else if ptrEqual token.value, "sizeof" {
+                    type:&TYPE = new TYPE;
+                    type.variant = TypeVariant.TypeInt;
+                    return &type;
+                }
+                else if (ptrEqual token.value, "printf") || (ptrEqual token.value, "print") || (ptrEqual token.value, "println") || (ptrEqual token.value, "throw") || (ptrEqual token.value, "inC") {
+                    typ:&TYPE = new TYPE;
+                    typ.variant = TypeVariant.TypeVoid;
+                    return &typ;
+                }
+                else if ptrEqual token.value, "hodnota" {
+                    typ:&TYPE = this.deduceType childs[1], scope;
+                    if typ.variant != TypeVariant.TypePointer {
+                        zavolej this.printScope;
+                        err:&Error = this.generateError childs[1].tokensStart;
+                        err.message.appendPtr "Not a pointer ";
+                        err.message.appendPtr typ.name.ptr;
+                        err.print true;
+                        throw "Not a pointer";
+                    }
+                    //TOODO
+                    return &typ;
+                }
+                else {
+                    if this.isFunctionDefined token.value, childs[0].tokensStart {
+                        func:FunctionNode = this.getFunctionByName token.value;
+                        return zavolej func.returnType.copy;
+                    }
+                    else {
+                        err:&Error = this.generateError childs[0].tokensStart;
+                        err.message.appendPtr "Undefined function ";
+                        err.message.appendPtr token.value;
+                        err.print true;
+                        throw "Unknown function";
+                    }
+                }
+            }
+            else if childs[0].type == AstType.AstStructAccess {
+                accessChilds:pointer<NODE>;
+                inC "accessChilds = (NODE**)childs[0]->children";
+                strctType:&TYPE = this.deduceType accessChilds[0], scope;
+                if strctType.variant != TypeVariant.TypeStruct {
+                    zavolej this.printScope;
+                    err:&Error = this.generateError ast.tokensStart;
+                    err.message.appendPtr "Not a struct ";
+                    err.message.appendPtr strctType.name.ptr;
+                    err.print true;
+                    throw "Not a struct";
+                }
+                if this.isStructDefined strctType.name.ptr, ast.tokensStart {
+                    strct:STRCTENTRY = this.getStructByName strctType.name.ptr;
+                    if strct.containsFun tokens[accessChilds[1].tokensStart].value {
+                        type = strct.getFunctionReturnType tokens[accessChilds[1].tokensStart].value;
+                        return zavolej type.copy;
+                    }
+                    else {
+                        zavolej this.printScope;
+                        err:&Error = this.generateError accessChilds[1].tokensStart;
+                        err.message.appendPtr "Struct doesnt contain function ";
+                        err.message.appendPtr tokens[accessChilds[1].tokensStart].value;
+                        err.print true;
+                        throw "Struct doesnt contain function";
+                    }
+                }
+                else {
+                    zavolej this.printScope;
+                    err:&Error = this.generateError ast.tokensStart;
+                    err.message.appendPtr "Struct not defined ";
+                    err.print true;
+                    throw "Struct not defined";
+                }
+            }
+        }
+
+        // if its cast get type of child[0]
+
+        if ast.type == AstType.AstVariableDeclaration {
+            token = tokens[childs[0].tokensStart];
+            str = toSTR token.value;
+            if scope.isDefined str {
+                type = scope.getType str;
+                return zavolej type.copy;
+            }
+            return generateType childs[1], tokens;
+        }
+
+        if ast.type == AstType.AstCast {
+            return generateType childs[1], tokens;
+        }
+
+        // if its  comparation get bool
+        if ast.type == AstType.AstComparation {
+            type:&TYPE = new TYPE;
+            type.variant = TypeVariant.TypeBool;
+            return &type;
+        }
+
+        // if its term and one of childs its pointer get pointer
+        if ast.type == AstType.AstTerm {
+            child0Type:&TYPE = this.deduceType childs[0], scope;
+            child1Type:&TYPE = this.deduceType childs[1], scope;
+            // if both are pointer throw error
+            if child0Type.variant == TypeVariant.TypePointer && child1Type.variant == TypeVariant.TypePointer {
+                err:&Error = this.generateError ast.tokensStart;
+                err.message.appendPtr "Pointer aritmethic not allowed";
+                err.print true;
+                throw "Pointer aritmethic not allowed";
+            }
+            // if one of them is pointer and other is int return pointer
+            if child0Type.variant == TypeVariant.TypePointer && child1Type.variant == TypeVariant.TypeInt {
+                return &child0Type;
+            }
+            if child1Type.variant == TypeVariant.TypePointer && child0Type.variant == TypeVariant.TypeInt {
+                return &child1Type;
+            }
+        }
+
+        // if its unary and its memmove add memmove type
+        if ast.type == AstType.AstUnary {
+            if ast.operand == AstOperandType.MemMove {
+                type:&TYPE = this.deduceType childs[0], scope;
+                type.isMemMove = true;
+                return &type;
+            }
+            return this.deduceType childs[0], scope;
+        }
+
+        // if its factor return bigger type of child[0] and child[1]]
+        if ast.type == AstType.AstFactor {
+            child0Type:&TYPE = this.deduceType childs[0], scope;
+            child1Type:&TYPE = this.deduceType childs[1], scope;
+            if child0Type.variant == TypeVariant.TypePointer || child1Type.variant == TypeVariant.TypePointer {
+                err:&Error = this.generateError ast.tokensStart;
+                err.message.appendPtr "Pointer aritmethic not allowed";
+                err.print true;
+                throw "Pointer aritmethic not allowed";
+            }
+            if child0Type.variant > child1Type.variant {
+                return &child0Type;
+            }
+            return &child1Type;
+        }
+
+        // if its term return bigger type of child[0] and child[1]] or pointer if its pointer and int
+
+        if ast.type == AstType.AstTerm {
+            child0Type:&TYPE = this.deduceType childs[0], scope;
+            child1Type:&TYPE = this.deduceType childs[1], scope;
+            if child0Type.variant == TypeVariant.TypePointer && child1Type.variant == TypeVariant.TypePointer {
+                err:&Error = this.generateError ast.tokensStart;
+                err.message.appendPtr "Pointer aritmethic not allowed";
+                err.print true;
+                throw "Pointer aritmethic not allowed";
+            }
+            if child0Type.variant == TypeVariant.TypePointer && child1Type.variant == TypeVariant.TypeInt {
+                return &child0Type;
+            }
+            if child1Type.variant == TypeVariant.TypePointer && child0Type.variant == TypeVariant.TypeInt {
+                return &child1Type;
+            }
+
+            if child0Type.variant == TypeVariant.TypePointer || child1Type.variant == TypeVariant.TypePointer {
+                err:&Error = this.generateError ast.tokensStart;
+                err.message.appendPtr "Pointer aritmethic not allowed";
+                err.print true;
+                throw "Pointer aritmethic not allowed";
+            }
+
+            if child0Type.variant > child1Type.variant {
+                return &child0Type;
+            }
+            return &child1Type;
+        }
+
+
+
+        err:&Error = this.generateError ast.tokensStart;
+        err.message.appendPtr "deduceType not implemented for ";
+        err.print true;
+
+        throw "Not implemented yet";
+    }
+
+    virtualPrint ast:NODE { void
+        token:TOKEN = this.tokens[ast.tokensStart];
+        
+        if ast.type == AstType.AstLiteral {
+            token:TOKEN = this.tokens[ast.tokensStart];
+            if token.type == TokenType.String {
+                printf "fprintf(czStdOut,%c%s%c)", 34, token.value, 34;
+                return;
+            }
+            else if token.type == TokenType.Number {
+                printf "fprintf(czStdOut%c%%d%c, %d)", 34, 34, token.nValue;
+                return;
+            }
+            else if token.type == TokenType.BoolTrue {
+                printf "fprintf(czStdOut,%c%%s%c, %ctrue%c)", 34, 34, 34, 34;
+                return;
+            }
+            else if token.type == TokenType.BoolFalse {
+                printf "fprintf(czStdOut,%c%%s%c, %cfalse%c)", 34, 34, 34, 34;
+                return;
+            }
+            else if token.type == TokenType.Character {
+                printf "fprintf(czStdOut,%c%%c%c, %d)", 34, 34, token.nValue;
+                return;
+            }
+
+            throw "Unknown literal";
+        }
+
+        typ:&TYPE = this.deduceType ast, this.scope;
+        if typ.variant == TypeVariant.TypeInt {
+            printf "fprintf(czStdOut,%c%%d%c, ", 34, 34;
+            this.toCAst ast;
+            printf ")";
+        }
+        else if typ.variant == TypeVariant.TypeChar {
+            printf "fprintf(czStdOut,%c%%c%c, ", 34, 34;
+            this.toCAst ast;
+            printf ")";
+        }
+        else if typ.variant == TypeVariant.TypePointer {
+            if typ.dereference.variant == TypeVariant.TypeChar {
+                printf "fprintf(czStdOut,%c%%s%c, ", 34, 34;
+                this.toCAst ast;
+                printf ")";
+                return;
+            }
+            printf "fprintf(czStdOut,%c%%p%c, ", 34, 34;
+            this.toCAst ast;
+            printf ")";
+        }
+        else if typ.variant == TypeVariant.TypeStruct {
+            printf "fprintf(czStdOut,%c%s%c)", 34, typ.name.ptr, 34;
+        }
+        else {
+            throw "Unknown type";
+        }
+    }
+
+
+    printScope { void
+        old:FileStream;
+        inC "old = czStdOut";
+        inC "czStdOut = stderr";
+
+        scope:SCOPE = this.scope;
+
+        while scope != 0 {
+            for i:int -> 0 do scope.size {
+                printf "%s:", scope.vars[i].name.ptr;
+                zavolej scope.vars[i].typ.printType;
+                printf ", ";
+            }
+            printf "\n";
+            scope = scope.parent;
+        }
+
+
+    
+        inC "czStdOut = old";
+    }
+
+    compile buildDir:pointer<char> { void
+        // compile program to C code
+        if this.program == 0 {
+            return;
+        }
+        
+        this.scope = new SCOPE;
+        zavolej this.scope.init;
+        
+        writer:&FILEWRITER = new FILEWRITER;
+        name:&STR = toSTR buildDir;
+
+        if name.ptr[name.size-1] != '/' {
+            name.appendPtr "/";
+        }
+
+        size:int = name.size;
+        if this.program.packageName != 0 {
+            name.appendPtr this.program.packageName.ptr;
+        }
+        else {
+            name.appendPtr "main";
+        }
+        for i:int -> size do name.size {
+            if name.ptr[i] == ':' || name.ptr[i] == '.' || name.ptr[i] == '/' || name.ptr[i] == 92 || name.ptr[i] == ' '{
+                name.ptr[i] = '_';
+            }
+        }
+        name.appendPtr ".c";
+        writer.init name.ptr;
+        inC "czStdOut = writer->stream";
+
+        
+        name.ptr[name.size-1] = 0;
+        name.size -= 1;
+        name.ptr[name.size-1] = 0;
+        name.size -= 1;
+
+        if this.program.packageName != 0 {
+            printf "#ifndef CZECHTINA_%s\n", name.ptr + size;
+            printf "#define CZECHTINA_%s\n", name.ptr + size;
+        }
+
+        printf "#include <stdio.h>\n";
+        printf "#include <stdlib.h>\n";
+        printf "#include <stdbool.h>\n";
+        printf "#include <string.h>\n";
+
+        for i:int -> 0 do this.program.iSize {
+            ptr:pointer<char> = this.program.imports[i].ptr;
+            if ptr[0]=='c' && ptr[1] == ':' {
+                ptr += 3;
+                print "#include <";
+                while hodnota ptr {
+                    if (hodnota ptr) == ':' {
+                        print "/";
+                        ptr += 2; 
+                    }
+                    else {
+                        printf "%c", (hodnota ptr);
+                        ptr += 1;
+                    }
+                }
+                print ".h>\n";
+            }
+            else {
+                printf "#include \"";
+                while hodnota ptr {
+                    if hodnota ptr == ':' 
+                        -> printf "_";
+                    else 
+                        -> printf "%c", (hodnota ptr);
+                    ptr += 1;
+                }
+                printf ".c\"\n";
+            }
+        }
+
+        if this.program.packageName != 0 {
+            preludeDeclare 0;
+        }
+        else {
+            // is main
+            preludeDefine 0;
+        }
+
+        for i:int -> 0 do this.program.sSize {
+            strct:STRCTENTRY = this.program.strcts[i];
+            printf "typedef struct _%s %s;\n", strct.name.ptr, strct.name.ptr;
+        }
+
+        for i:int -> 0 do this.program.fSize {
+            this.funToCAst this.program.functions[i], true;
+        }
+
+        for i:int -> 0 do this.program.sSize {
+            strct:STRCTENTRY = this.program.strcts[i];
+            this.strctPrintf strct, true;
+        }
+
+
+
+        for i:int -> 0 do this.program.fSize {
+            this.funToCAst this.program.functions[i], false;
+        }
+
+        for i:int -> 0 do this.program.sSize {
+            strct:STRCTENTRY = this.program.strcts[i];
+            this.strctPrintf strct, false;
+        }
+
+        if this.program.main != 0 {
+            this.funToCAst this.program.main, false;
+        }
+
+        if this.program.packageName != 0 {
+            printf "#endif\n";
+        }
+
+        inC "czStdOut = stdout";
+        zavolej writer.close;
+
+        if this.program.packageName != 0 {
+            println "compiled: \033[92m[", this.program.packageName.ptr, "]\033[39m";
+        }
+    }
+
+    toCAst ast:NODE{ void
+        // printf ast as C code
+        if ast == 0 {
+            return;
+        }
+
+        childs:pointer<NODE>;
+        inC "childs = (NODE**)ast->children";
+        tokens:pointer<TOKEN> = this.tokens;
+    
+        if ast.type == AstType.AstLiteral {
+            token:TOKEN = this.tokens[ast.tokensStart];
+            if token.type == TokenType.String {
+                printf "%c%s%c", 34 ,token.value, 34;
+            }
+            else if token.type == TokenType.Number {
+                print token.nValue;
+            }
+            else if token.type == TokenType.BoolFalse {
+                print "false";
+            }
+            else if token.type == TokenType.BoolTrue {
+                print "true";
+            }
+            else if token.type == TokenType.Character{
+
+                if token.nValue == 92 {
+                    printf "'%c%c'", 92, 92;
+                }
+                else if token.nValue == 34 {
+                    printf "'%c%c'", 92, 34;
+                }
+                else if token.nValue == 10 {
+                    printf "'%cn'", 92;
+                }
+                else if token.nValue == 9 {
+                    printf "'%ct'", 92;
+                }
+                else if token.nValue == 13 {
+                    printf "'%cr'", 92;
+                }
+                else if token.nValue == 0 {
+                    printf "'%c0'", 92;
+                }
+                else if token.nValue == 39 {
+                    printf "'%c%c'", 92, 39;
+                }
+                else {
+                    printf "'%c'", token.nValue;
+                }
+            }
+        }
+        else if ast.type == AstType.AstVariable {
+            token:TOKEN = tokens[ast.tokensStart];
+
+            strname:&STR = toSTR token.value;
+            if (this.scope.isDefined strname) == false {
+                zavolej this.printScope;
+                err:&Error = this.generateError ast.tokensStart;
+                err.message.appendPtr "Undefined variable ";
+                err.message.appendPtr strname.ptr;
+                closest:pointer<char> = this.scope.getClosestVariable strname.ptr, 100;
+                err.secMessage.appendPtr "Did you mean ";
+                err.secMessage.appendPtr closest;
+                err.secMessage.appendPtr "?";
+                err.print true;
+                throw "Undefined variable enable deducer";
+            }
+            printf "%s", token.value;
+        }
+        else if ast.type == AstType.AstFactor || ast.type == AstType.AstTerm || ast.type == AstType.AstExpression{
+            this.toCAst childs[0];
+            printAstOperandType ast.operand;
+            this.toCAst childs[1];
+        }
+        else if ast.type == AstType.AstComparation {
+            if childs[0].type == AstType.AstComparation {
+                printf "(";
+                this.toCAst childs[0];
+                printf "&&";
+                secChilds:pointer<NODE>;
+                inC "secChilds = (NODE**)childs[0]->children";
+                this.toCAst secChilds[1];
+                printAstOperandType ast.operand;
+                this.toCAst childs[1];
+                printf ")";
+                return;
+            }
+
+            this.toCAst childs[0];
+            printAstOperandType ast.operand;
+            this.toCAst childs[1];
+        }
+        else if ast.type == AstType.AstArrayAccess {
+            this.toCAst childs[0];
+            printf "[";
+            this.toCAst childs[1];
+            printf "]";
+        } 
+        else if ast.type == AstType.AstStructAccess {
+            name:pointer<char> = tokens[childs[0].tokensStart].value;
+            secName:pointer<char> = tokens[childs[1].tokensStart].value;
+
+            if childs[0].type == AstType.AstVariable {
+                if childs[1].type == AstType.AstVariable {
+                    if this.isEnumDefined tokens[childs[0].tokensStart], ast.tokensStart {
+                        en:ENUM = this.getEnumByName name;
+                        for i:int -> 0 do en.size {
+                            if ptrEqual en.values[i].name.ptr, secName {
+                                printf "%d", en.values[i].value;
+                                en.values[i].used += 1;
+                                return;
+                            }
+                        }
+                        zavolej this.printScope;
+                        err:&Error = this.generateError childs[1].tokensStart;
+                        err.message.appendPtr "Enum doesnt contain value ";
+                        err.message.appendPtr secName;
+                        err.print true;
+                        throw "Enum doesnt contain value";
+                    }
+                }
+            }
+
+            strctType:&TYPE = this.deduceType childs[0], this.scope;
+            if strctType.variant != TypeVariant.TypeStruct {
+                zavolej this.printScope;
+                err:&Error = this.generateError ast.tokensStart;
+                err.message.appendPtr "Type is not struct";
+                err.print true;
+                throw "undefined behaivior";
+            }
+            if this.isStructDefined strctType.name.ptr, ast.tokensStart {
+                strct:STRCTENTRY = this.getStructByName strctType.name.ptr;
+                if strct.containsProp secName {
+                    this.toCAst childs[0];
+                    printf "->%s", secName;
+                    return;
+                }  
+                else if strct.containsFun secName {
+                    zavolej this.printScope;
+                    err:&Error = this.generateError childs[0].tokensStart;
+                    err.message.appendPtr "Struct doesnt contain property ";
+                    err.message.appendPtr secName;
+                    err.secMessage.appendPtr "Use `zavolej` or `call` to call function without params";
+                    err.print true;
+                    throw "Struct doesnt contain property";
+                }
+                else {
+                    zavolej this.printScope;
+                    err:&Error = this.generateError childs[1].tokensStart;
+                    err.message.appendPtr "Struct doesnt contain property ";
+                    err.message.appendPtr secName;
+                    err.print true;
+                    throw "Struct doesnt contain property";
+                }
+            }
+            else {
+                zavolej this.printScope;
+                err:&Error = this.generateError childs[0].tokensStart;
+                err.message.appendPtr "Struct not defined ";
+                err.print true;
+                throw "Struct not defined";
+            }
+
+            zavolej this.printScope;
+            err:&Error = this.generateError ast.tokensStart;
+            err.message.appendPtr "Struct not defined ";
+            err.print true;
+            throw "Unfinish compile";
+
+
+        }
+        else if ast.type == AstType.AstUnary {
+
+            if ast.operand == AstOperandType.Not {
+                printf "!";
+                this.toCAst childs[0];
+            }
+            else if ast.operand == AstOperandType.Minus {
+                printf "-";
+                this.toCAst childs[0];
+            }
+            else if ast.operand == AstOperandType.Brackets {
+                printf "(";
+                this.toCAst childs[0];
+                printf ")";
+            }
+            else if ast.operand == AstOperandType.MemMove {
+                this.toCAst childs[0];
+            }
+            else {
+                throw "Unknown unary operand";
+            }
+        }
+        else if ast.type == AstType.AstCast {
+            printf "(";
+            this.toCAst childs[1];
+            printf ")";
+            printf "(";
+            this.toCAst childs[0];
+            printf ")";
+        }
+        else if ast.type == AstType.AstFunctionCall {
+            // todo function call with structs and virtual
+            // childs[0] = function identifier
+            // childs[1] = arguments
+            if childs[0].type == AstType.AstVariable {
+                token:TOKEN = tokens[childs[0].tokensStart];
+                if ptrEqual token.value, "inC" {
+                    strToken:TOKEN = tokens[childs[1].tokensStart];
+                    ptr:pointer<char> = strToken.value;
+                    while hodnota ptr {
+                        if hodnota ptr == 92 {
+                            ptr++;
+                            if hodnota ptr == 110 {
+                                println "";
+                            }
+                            else if hodnota ptr == 34 {
+                                printf "%c", 34;
+                            }
+                            else if hodnota ptr == 92 {
+                                printf "%c", 92;
+                            }
+                            else {
+                                printf "%c", (hodnota ptr);
+                            }
+                            ptr++;
+                            continue;
+                        }
+                        printf "%c", (hodnota ptr);
+                        ptr++;
+                    }
+                    return;
+                }
+                else if ptrEqual token.value, "throw" {
+                    strToken:TOKEN = tokens[childs[1].tokensStart];
+                    printf "fprintf(stderr,\"%s:%d:%d\\n\");", this.filePath.ptr, strToken.line, strToken.col;
+                    printf "fprintf(stderr,%c%s%c);exit(1)", 34, strToken.value, 34;
+                    return;
+                }
+                else if ptrEqual token.value, "typeof" {
+                    vardef:&TYPE = this.deduceType childs[1], this.scope;
+                    printf "%c", 34;
+                    zavolej vardef.printType;
+                    printf "%c", 34;
+                    return;
+                }
+                else if ptrEqual token.value, "sizeof" {
+                    //TODO better size of
+                    nextToken:TOKEN = tokens[childs[1].tokensStart];
+                    if nextToken.type == TokenType.Identifier {
+                        printf "sizeof(void*)";
+                        return;
+                    }
+                    printf "sizeof";
+                }
+                else if ptrEqual token.value, "printf" {
+                    printf "fprintf(czStdOut, ";
+                    for i:int -> 1 do ast.size {
+                        this.toCAst childs[i];
+                        if i < ast.size - 1 {
+                            printf ", ";
+                        }
+                    }
+                    printf ")";
+                    return;
+                }
+                else if ptrEqual token.value, "print" {
+                    for i:int -> 1 do ast.size {
+                        this.virtualPrint childs[i];
+                        if i < ast.size - 1 {
+                            printf "; ";
+                        }
+                    }
+                    return;
+                }
+                else if ptrEqual token.value, "hodnota" {
+                    printf "*";
+                    this.toCAst childs[1];
+                    return;
+                }
+                else if ptrEqual token.value, "println" {
+                    for i:int -> 1 do ast.size {
+                        this.virtualPrint childs[i];
+                        if i < ast.size {
+                            printf "; ";
+                        }
+                    }
+                    printf "fputs(%c%cn%c,czStdOut)", 34,92, 34;
+                    return;
+                }
+                else {
+                    if this.isFunctionDefined token.value, childs[0].tokensStart {
+                        fun:FunctionNode = this.getFunctionByName token.value;
+                        
+                        if fun.isDepricated {
+                            err:&Error = this.generateError childs[0].tokensStart;
+                            err.message.appendPtr "Using depricated function ";
+                            err.message.appendPtr token.value;
+                            err.secMessage.appendPtr " at this position";
+                            err.level = ErrorLevel.WARNING;
+                            err.print false;
+                            zavolej err.destruct;
+                            inC "free(err)";
+                        }
+                        
+
+
+
+                        printf "%s", token.value;
+                    }
+                    else {
+                        err:&Error = this.generateError childs[0].tokensStart;
+                        err.message.appendPtr "Undefined function ";
+                        err.message.appendPtr token.value;
+                        err.secMessage.appendPtr " at this position";
+                        err.level = ErrorLevel.FATAL;
+                        err.print true;
+
+                        throw "Unknown function";
+                    }
+                }
+            }
+            else if childs[0].type == AstType.AstStructAccess {
+                accessChilds: pointer<NODE>;
+                inC "accessChilds = (NODE**)childs[0]->children";
+
+                name:pointer<char> = tokens[accessChilds[0].tokensStart].value;
+                secName:pointer<char> = tokens[accessChilds[1].tokensStart].value;
+
+                if accessChilds[0].type == AstType.AstVariable {
+                    if accessChilds[1].type == AstType.AstVariable {    
+
+                        strname:&STR = toSTR name;
+                        if (this.scope.isDefined strname) == false {
+                            zavolej this.printScope;
+                            err:&Error = this.generateError accessChilds[0].tokensStart;
+                            err.message.appendPtr "Undefined variable ";
+                            err.message.appendPtr strname.ptr;
+                            closest:pointer<char> = this.scope.getClosestVariable strname.ptr, 100;
+                            err.secMessage.appendPtr "Did you mean ";
+                            err.secMessage.appendPtr closest;
+                            err.secMessage.appendPtr "?";
+                            err.print true;
+                            throw "Undefined variable enable deducer";
+                        }
+                        vardef:TYPE = this.scope.getType strname;
+
+                        if vardef.variant != TypeVariant.TypeStruct {
+                            zavolej this.printScope;
+                            err:&Error = this.generateError accessChilds[0].tokensStart;
+                            err.message.appendPtr "Type is not struct ";
+                            err.message.appendPtr strname.ptr;
+                            err.secMessage.appendPtr "Type ";
+                            err.secMessage.appendPtr vardef.name.ptr;
+                            err.secMessage.appendPtr " is not struct.";
+                            err.print true;
+                            throw "undefined behaivior";
+                        }
+
+                        if this.isStructDefined vardef.name.ptr, ast.tokensStart {
+                            strct:STRCTENTRY = this.getStructByName vardef.name.ptr;
+                            if ptrEqual vardef.name.ptr, strct.name.ptr {
+                                if strct.containsFun secName {
+                                    printf "CZ_%s_%s", strct.name.ptr, secName;
+                                    printf "(%s", name;
+                                    if ast.size > 1 {
+                                        printf ", ";
+                                    }
+                                    for i:int -> 1 do ast.size {
+                                        this.toCAst childs[i];
+                                        if i < ast.size - 1 {
+                                            printf ", ";
+                                        }
+                                    }
+
+                                    printf ")";
+                                    return;
+                                }  
+                                else {
+                                    zavolej this.printScope;
+                                    err:&Error = this.generateError accessChilds[1].tokensStart;
+                                    err.message.appendPtr "Struct doesnt contain function ";
+                                    err.message.appendPtr secName;
+                                    err.secMessage.appendPtr "Struct ";
+                                    err.secMessage.appendPtr strct.name.ptr;
+                                    err.secMessage.appendPtr " doesnt contain function.";
+                                    err.print true;
+                                    throw "Struct doesnt contain function";
+                                }
+                            }
+                        }
+                    }
+                }
+
+
+
+
+                deducedType:&TYPE = this.deduceType accessChilds[0], this.scope;
+                if deducedType.variant != TypeVariant.TypeStruct {
+                    zavolej this.printScope;
+                    err:&Error = this.generateError accessChilds[0].tokensStart;
+                    err.message.appendPtr "Type is not struct ";
+                    err.message.appendPtr deducedType.name.ptr;
+                    err.print true;
+                    throw "undefined behaivior";
+                }
+
+                if this.isStructDefined deducedType.name.ptr, ast.tokensStart {
+                    strct:STRCTENTRY = this.getStructByName deducedType.name.ptr;
+                    if strct.containsFun secName {
+                        printf "CZ_%s_%s", strct.name.ptr, secName;
+                        printf "(";
+                        this.toCAst accessChilds[0];
+                        if ast.size > 1 {
+                            printf ", ";
+                        }
+                        for i:int -> 1 do ast.size {
+                            this.toCAst childs[i];
+                            if i < ast.size - 1 {
+                                printf ", ";
+                            }
+                        }
+
+                        printf ")";
+                        return;
+                    }  
+                    else {
+                        zavolej this.printScope;
+                        err:&Error = this.generateError accessChilds[1].tokensStart;
+                        err.message.appendPtr "Struct doesnt contain function ";
+                        err.message.appendPtr secName;
+                        err.secMessage.appendPtr "Struct ";
+                        err.secMessage.appendPtr strct.name.ptr;
+                        err.secMessage.appendPtr " doesnt contain function.";
+                        err.print true;
+                        throw "Struct doesnt contain function";
+                    }
+                }
+                else {
+                    zavolej this.printScope;
+                    err:&Error = this.generateError accessChilds[0].tokensStart;
+                    err.message.appendPtr "Struct not defined ";
+                    err.print true;
+                    throw "Struct not defined";
+                }
+
+            }
+            else {
+                this.toCAst childs[0];
+            }
+            printf "(";
+            for i:int -> 1 do ast.size {
+                this.toCAst childs[i];
+                if i < ast.size - 1 {
+                    printf ", ";
+                }
+            }
+            printf ")";
+        }
+        else if ast.type == AstType.AstLines {
+            for i:int -> 0 do ast.size {
+                this.toCAst childs[i];
+                printf ";\n";
+            }
+        }
+        else if ast.type == AstType.AstAssignment {
+            if this.enableDeducer == true {
+                // if child[0] is variable and its not defined in scope -> define it
+                if childs[0].type == AstType.AstVariable {
+                    token:TOKEN = tokens[childs[0].tokensStart];
+                    strname:&STR = toSTR token.value;
+                    if (this.scope.isDefined strname) == false {
+                        vardef:&DEFINEDVARS = new DEFINEDVARS;
+                        vardef.moved = false;
+                        vardef.name = &strname;
+                        vardef.typ = this.deduceType childs[1], this.scope;
+                        this.scope.define &vardef;
+
+                        //print type and name
+                        zavolej vardef.typ.toC;
+                        printf " ";
+                        printf "%s", token.value;
+
+                    }
+                    else {
+                        this.toCAst childs[0];
+                    }
+                }
+                else {
+                    this.toCAst childs[0];
+                }
+
+            }
+            else {
+                this.toCAst childs[0];
+            }
+            printAstOperandType ast.operand;
+            this.toCAst childs[1];
+        }
+        else if ast.type == AstType.AstUnaryAssignment {
+            this.toCAst childs[0];
+            printAstOperandType ast.operand;
+        }
+        else if ast.type == AstType.AstVariableDeclaration {
+            token:TOKEN = tokens[childs[0].tokensStart];
+            strname:&STR = toSTR token.value;
+            vardef:&DEFINEDVARS = new DEFINEDVARS;
+            vardef.moved = false;
+            vardef.name = &strname;
+            vardef.typ = generateType childs[1], tokens;
+
+            this.scope.define &vardef;
+
+            this.toCAst childs[1];
+            printf " ";
+            this.toCAst childs[0];
+        }
+        else if ast.type == AstType.AstType {
+            // todo type
+            //primitive types
+            token:TOKEN = tokens[ast.tokensStart];
+            if token.type == TokenType.TypeInt {
+                printf "int";
+            }
+            else if token.type == TokenType.TypeVoid {
+                printf "void";
+            }
+            else if token.type == TokenType.TypeBool {
+                printf "bool";
+            }
+            else if token.type == TokenType.TypeDecimal {
+                printf "float";
+            }
+            else if token.type == TokenType.TypeChar {
+                printf "char";
+            }
+            else if token.type == TokenType.TypePointer {
+                this.toCAst childs[0];
+                printf "*";
+            }
+            else if token.type == TokenType.Ampersand {
+                this.toCAst childs[0];
+            }
+            else if token.type == TokenType.Identifier {
+
+                if this.isTypeDefined token.value {
+                    typ:TYPE = this.geTypeByName token.value;
+                    zavolej typ.toC;
+                    return;   
+                }
+
+
+                exist:bool = this.isStructDefined token.value, ast.tokensStart;
+
+                
+                if exist == false {
+                    zavolej this.printScope;
+                    err:&Error = this.generateError ast.tokensStart;
+                    err.message.appendPtr "Undefined struct ";
+                    err.message.appendPtr token.value;
+                    closest:pointer<char> = this.getClosestStructByName token.value;
+                    err.secMessage.appendPtr "Did you mean ";
+                    err.secMessage.appendPtr closest;
+                    err.secMessage.appendPtr "?";
+                    err.print true;
+                    throw "Undefined type";
+                }
+
+                printf "%s*", token.value;
+            }
+            else {
+                throw "Unknown type";
+            }
+        }
+        else if ast.type == AstType.AstFlow {
+            token:TOKEN = tokens[ast.tokensStart];
+            printTokenType token.type;
+            if ast.size > 0 {
+                printf " ";
+                this.toCAst childs[0];
+            }
+        }
+        else if ast.type == AstType.AstIf {
+            printf "if (";
+            this.toCAst childs[0];
+            printf ") {\n";
+            zavolej this.scopePush;
+            firstChild:NODE = childs[1];
+            this.toCAst firstChild;
+            if firstChild.type != AstType.AstLines ->
+                printf ";\n";
+            zavolej this.scopePop;
+            printf "}";
+            pos:int = 2;
+            while pos < ast.size - 1 {
+                printf "\nelse if (";
+                this.toCAst childs[pos];
+                printf ") {\n";
+                zavolej this.scopePush;
+                this.toCAst childs[pos + 1];
+                if childs[pos + 1].type != AstType.AstLines ->
+                    printf ";\n";
+
+                zavolej this.scopePop;
+                printf "}";
+                pos += 2;
+            } 
+            if pos < ast.size {
+                printf "\nelse {\n";
+                zavolej this.scopePush;
+                this.toCAst childs[pos];
+                if childs[pos].type != AstType.AstLines ->
+                    printf ";\n";
+                zavolej this.scopePop;
+                printf "}";
+            }
+        }
+        else if ast.type == AstType.AstWhile {
+            printf "while (";
+            this.toCAst childs[0];
+            printf ") {\n";
+            zavolej this.scopePush;
+            this.toCAst childs[1];
+            if childs[1].type != AstType.AstLines ->
+                printf ";\n";
+            zavolej this.scopePop;
+            printf "}";
+        }
+        else if ast.type == AstType.AstFor {
+            printf "for (";
+            zavolej this.scopePush;
+            this.toCAst childs[0];
+            printf ";";
+            this.toCAst childs[1];
+            printf ";";
+            this.toCAst childs[2];
+            printf ") {\n";
+            this.toCAst childs[3];
+            zavolej this.scopePop;
+            printf "}";
+        }
+        else if ast.type == AstType.AstRangeFor {
+            // child[0] = var dec
+            // child[1] = range
+            // child[2] = body
+
+            // get var name
+            varDec:NODE = childs[0];
+            varName:pointer<char> = tokens[varDec.tokensStart].value;
+            range:NODE = childs[1];
+            rangeChild:pointer<NODE>;
+            inC "rangeChild = (NODE**)range->children";
+            rangeStart:NODE = rangeChild[0];
+            rangeEnd:NODE = rangeChild[1];
+            printf "for(";
+            zavolej this.scopePush;
+            this.toCAst varDec;
+            printf " = ";
+            this.toCAst rangeStart;
+            printf "; ";
+            // todo
+            printf "%s < ", varName;
+            this.toCAst rangeEnd;
+            printf "; %s++) {\n", varName;
+            this.toCAst childs[2];
+            zavolej this.scopePop;
+            printf "}";
+        }
+        else if ast.type == AstType.AstNew {
+            type:&TYPE = generateType childs[0], tokens;
+            if ast.size == 1 {
+                printf "malloc(sizeof(";
+                if type.variant == TypeVariant.TypeStruct {
+                    printf "%s", type.name.ptr;
+                }
+                else {
+                    zavolej type.toC;
+                }
+                printf "))";
+            } 
+            else {
+                printf "malloc(sizeof(";
+                if type.variant == TypeVariant.TypeStruct {
+                    printf "%s*", type.name.ptr;
+                }
+                else {
+                    zavolej type.toC;
+                    printf "*";
+                }
+                printf ") *(";
+                this.toCAst childs[1];
+                printf "))";
+            }
+            
+        }
+        else if ast.type == AstType.AstDestruct {
+            if ast.size == 0 -> return;
+        
+
+            printf "//somehow destruct: ";
+            for i:int -> 0 do ast.size {
+                printf "%s ", ast.strs[i].ptr;
+            }
+            printf "\n";
+        }
+        else {
+            inC "fprintf(stderr,\"%c%d%c  \", 34,ast->type, 34)";
+            throw "Unknown ast type";
+        }
+    }
+
+
+    funToCAst ast:FunctionNode, declr:bool {void
+        childs:pointer<NODE>;
+        inC "childs = (NODE**)ast->ast->children";
+        // first token is function name
+        // ? -> arguments
+        // max - 2 -> return type
+        // max - 1 -> body
+
+        // todo function with structs and virtual
+        this.toCAst childs[ast.ast.size - 2];
+        printf " ";
+        token:TOKEN = this.tokens[ast.ast.tokensStart];
+        printf "%s" ,token.value;
+        printf "(";
+        zavolej this.scopePush;
+        pos:int = 0;
+        while pos < ast.ast.size - 2 {
+            this.toCAst childs[pos];
+            if pos < ast.ast.size - 3 {
+                printf ", ";
+            }
+            pos += 1;
+        }
+        if declr {
+            printf ");\n";
+            zavolej this.scopePop;
+            return;
+        }
+
+        printf ") {\n";
+        if this.debug {
+            printf "printf(\"%s\\n\");\n", token.value;
+        } 
+        this.toCAst childs[ast.ast.size - 1];
+        zavolej this.scopePop;
+        printf "}\n";
+    }
+
+
+    strctfunToCAst ast:FunctionNode, declr:bool, strctName:STR {void
+        childs:pointer<NODE>;
+        inC "childs = (NODE**)ast->ast->children";
+        // first token is function name
+        // ? -> arguments
+        // max - 2 -> return type
+        // max - 1 -> body
+
+        // todo function with structs and virtual
+        this.toCAst childs[ast.ast.size - 2];
+        printf " ";
+        token:TOKEN = this.tokens[ast.ast.tokensStart];
+        printf "CZ_%s_%s", strctName.ptr, token.value;
+        printf "(";
+        zavolej this.scopePush;
+        //define this
+        thisStr:&STR = toSTR "this";
+        thisType:&TYPE = new TYPE;
+        thisType.name = toSTR strctName.ptr;
+        thisType.variant = TypeVariant.TypeStruct;
+        thisVar:&DEFINEDVARS = new DEFINEDVARS;
+        thisVar.moved = false;
+        thisVar.name = &thisStr;
+        thisVar.typ = &thisType;
+        this.scope.define &thisVar;
+
+        printf "%s* this", strctName.ptr;
+        if ast.ast.size > 2 {
+            printf ", ";
+        }
+        pos:int = 0;
+        while pos < ast.ast.size - 2 {
+            this.toCAst childs[pos];
+            if pos < ast.ast.size - 3 {
+                printf ", ";
+            }
+            pos += 1;
+        }
+        if declr {
+            printf ");\n";
+            zavolej this.scopePop;
+            return;
+        }
+
+        printf ") {\n";
+        if this.debug {
+            printf "printf(\"CZ_%s_%s\\n\");\n", strctName.ptr, token.value;
+        }
+        this.toCAst childs[ast.ast.size - 1];
+        zavolej this.scopePop;
+        printf "}\n";
+    }
+
+
+    strctPrintf strct:STRCTENTRY, declr:bool {void
+        if declr {
+            printf "typedef struct _%s {\n", strct.name.ptr;
+            zavolej this.scopePush;
+            for i:int -> 0 do strct.pSize {
+                zavolej strct.props[i].type.toC;
+                printf  " %s;\n", strct.props[i].name.ptr;
+            }
+            zavolej this.scopePop;
+            printf "} ";
+            printf "%s;\n", strct.name.ptr;
+        }
+
+        for j:int -> 0 do strct.fSize {
+                this.strctfunToCAst strct.funs[j].ast, declr, strct.name;
+        }
+    }
+
+    
+
+
+    printUnusedEnumsValue { void
+        for i:int -> 0 do this.program.eSize {
+            en:ENUM = this.program.enums[i];
+            for j:int -> 0 do en.size {
+                if en.values[j].used == 0 {
+                    printf "\033[33mWarning: Enum value %s in %s is not used\033[39m\n", en.values[j].name.ptr, en.name.ptr;
+                }
+            }
+        }
+    }
+
+
+}
