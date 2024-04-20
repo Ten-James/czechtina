@@ -45,6 +45,10 @@ def create_stable():
     os.system(cpCmd)
 
 
+def create_unstable():
+    cpCmd = "cp ./build/* ./unstable/"
+    os.system(cpCmd)
+
 if __name__ == "__main__":
     old = change_version_in_code()
     change_version_in_readme()
@@ -52,4 +56,5 @@ if __name__ == "__main__":
     split_new = VERSION.split(".")
     if split_old[1] != split_new[1] or split_old[0] != split_new[0]:
         create_stable()
+    create_unstable()
     print("Version changed")
