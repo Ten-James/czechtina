@@ -64,7 +64,7 @@ void CZ_COMPILEPROCESS_virtualPrint(COMPILEPROCESS* this, NODE* ast);
 void CZ_COMPILEPROCESS_printScope(COMPILEPROCESS* this);
 void CZ_COMPILEPROCESS_compile(COMPILEPROCESS* this, char* buildDir);
 void CZ_COMPILEPROCESS_toCAst(COMPILEPROCESS* this, NODE* ast);
-void CZ_COMPILEPROCESS_funToCAst(COMPILEPROCESS* this, FunctionNode* ast, bool declr);
+void CZ_COMPILEPROCESS_funToCAst(COMPILEPROCESS* this, FunctionNode* ast, bool declr, bool isMain);
 void CZ_COMPILEPROCESS_strctfunToCAst(COMPILEPROCESS* this, FunctionNode* ast, bool declr, STR* strctName);
 void CZ_COMPILEPROCESS_strctPrintf(COMPILEPROCESS* this, STRCTENTRY* strct, bool declr);
 void CZ_COMPILEPROCESS_printUnusedEnumsValue(COMPILEPROCESS* this);
@@ -941,8 +941,7 @@ if (this->program==0) {
 return;
 ;
 };
-this->scope=malloc(sizeof(SCOPE));
-CZ_SCOPE_init(this->scope);
+this->scope=genererateGlobalScope();
 FILEWRITER* writer=malloc(sizeof(FILEWRITER));
 STR* name=toSTR(buildDir);
 if (name->ptr[name->size-1]!='/') {
@@ -1035,7 +1034,7 @@ fprintf(czStdOut, "typedef struct _%s %s;\n", strct->name->ptr, strct->name->ptr
 ;
 };
 for(int i = 0; i < this->program->fSize; i++) {
-CZ_COMPILEPROCESS_funToCAst(this, this->program->functions[i], true);
+CZ_COMPILEPROCESS_funToCAst(this, this->program->functions[i], true, false);
 ;
 };
 for(int i = 0; i < this->program->sSize; i++) {
@@ -1044,7 +1043,7 @@ CZ_COMPILEPROCESS_strctPrintf(this, strct, true);
 ;
 };
 for(int i = 0; i < this->program->fSize; i++) {
-CZ_COMPILEPROCESS_funToCAst(this, this->program->functions[i], false);
+CZ_COMPILEPROCESS_funToCAst(this, this->program->functions[i], false, false);
 ;
 };
 for(int i = 0; i < this->program->sSize; i++) {
@@ -1053,7 +1052,7 @@ CZ_COMPILEPROCESS_strctPrintf(this, strct, false);
 ;
 };
 if (this->program->main!=0) {
-CZ_COMPILEPROCESS_funToCAst(this, this->program->main, false);
+CZ_COMPILEPROCESS_funToCAst(this, this->program->main, false, true);
 ;
 };
 if (this->program->packageName!=0) {
@@ -1146,7 +1145,7 @@ CZ_STR_appendPtr(err->secMessage, "Did you mean ");
 CZ_STR_appendPtr(err->secMessage, closest);
 CZ_STR_appendPtr(err->secMessage, "?");
 CZ_Error_print(err, true);
-fprintf(stderr,"src/compiler/compiler.cz:959:57\n");fprintf(stderr,"Undefined variable enable deducer");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:957:57\n");fprintf(stderr,"Undefined variable enable deducer");exit(1);
 //somehow destruct: err 
 ;
 };
@@ -1209,7 +1208,7 @@ Error* err=CZ_COMPILEPROCESS_generateError(this, childs[1]->tokensStart);
 CZ_STR_appendPtr(err->message, "Enum doesnt contain value ");
 CZ_STR_appendPtr(err->message, secName);
 CZ_Error_print(err, true);
-fprintf(stderr,"src/compiler/compiler.cz:1012:57\n");fprintf(stderr,"Enum doesnt contain value");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1010:57\n");fprintf(stderr,"Enum doesnt contain value");exit(1);
 //somehow destruct: err 
 ;
 };
@@ -1223,7 +1222,7 @@ CZ_COMPILEPROCESS_printScope(this);
 Error* err=CZ_COMPILEPROCESS_generateError(this, ast->tokensStart);
 CZ_STR_appendPtr(err->message, "Type is not struct");
 CZ_Error_print(err, true);
-fprintf(stderr,"src/compiler/compiler.cz:1023:43\n");fprintf(stderr,"undefined behaivior");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1021:43\n");fprintf(stderr,"undefined behaivior");exit(1);
 //somehow destruct: err 
 ;
 };
@@ -1244,7 +1243,7 @@ CZ_STR_appendPtr(err->message, "Struct doesnt contain property ");
 CZ_STR_appendPtr(err->message, secName);
 CZ_STR_appendPtr(err->secMessage, "Use `zavolej` or `call` to call function without params");
 CZ_Error_print(err, true);
-fprintf(stderr,"src/compiler/compiler.cz:1039:58\n");fprintf(stderr,"Struct doesnt contain property");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1037:58\n");fprintf(stderr,"Struct doesnt contain property");exit(1);
 //somehow destruct: err 
 ;
 }
@@ -1254,7 +1253,7 @@ Error* err=CZ_COMPILEPROCESS_generateError(this, childs[1]->tokensStart);
 CZ_STR_appendPtr(err->message, "Struct doesnt contain property ");
 CZ_STR_appendPtr(err->message, secName);
 CZ_Error_print(err, true);
-fprintf(stderr,"src/compiler/compiler.cz:1047:58\n");fprintf(stderr,"Struct doesnt contain property");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1045:58\n");fprintf(stderr,"Struct doesnt contain property");exit(1);
 //somehow destruct: err 
 ;
 };
@@ -1265,7 +1264,7 @@ CZ_COMPILEPROCESS_printScope(this);
 Error* err=CZ_COMPILEPROCESS_generateError(this, childs[0]->tokensStart);
 CZ_STR_appendPtr(err->message, "Struct not defined ");
 CZ_Error_print(err, true);
-fprintf(stderr,"src/compiler/compiler.cz:1055:42\n");fprintf(stderr,"Struct not defined");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1053:42\n");fprintf(stderr,"Struct not defined");exit(1);
 //somehow destruct: err 
 ;
 };
@@ -1273,7 +1272,7 @@ CZ_COMPILEPROCESS_printScope(this);
 Error* err=CZ_COMPILEPROCESS_generateError(this, ast->tokensStart);
 CZ_STR_appendPtr(err->message, "Struct not defined ");
 CZ_Error_print(err, true);
-fprintf(stderr,"src/compiler/compiler.cz:1062:36\n");fprintf(stderr,"Unfinish compile");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1060:36\n");fprintf(stderr,"Unfinish compile");exit(1);
 //somehow destruct: err strctType 
 ;
 }
@@ -1299,7 +1298,7 @@ CZ_COMPILEPROCESS_toCAst(this, childs[0]);
 ;
 }
 else {
-fprintf(stderr,"src/compiler/compiler.cz:1085:45\n");fprintf(stderr,"Unknown unary operand");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1083:45\n");fprintf(stderr,"Unknown unary operand");exit(1);
 ;
 };
 ;
@@ -1455,7 +1454,7 @@ CZ_STR_appendPtr(err->message, token->value);
 CZ_STR_appendPtr(err->secMessage, " at this position");
 err->level=3;
 CZ_Error_print(err, true);
-fprintf(stderr,"src/compiler/compiler.cz:1213:48\n");fprintf(stderr,"Unknown function");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1211:48\n");fprintf(stderr,"Unknown function");exit(1);
 //somehow destruct: err 
 ;
 };
@@ -1481,7 +1480,7 @@ CZ_STR_appendPtr(err->secMessage, "Did you mean ");
 CZ_STR_appendPtr(err->secMessage, closest);
 CZ_STR_appendPtr(err->secMessage, "?");
 CZ_Error_print(err, true);
-fprintf(stderr,"src/compiler/compiler.cz:1238:69\n");fprintf(stderr,"Undefined variable enable deducer");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1236:69\n");fprintf(stderr,"Undefined variable enable deducer");exit(1);
 //somehow destruct: err 
 ;
 };
@@ -1495,7 +1494,7 @@ CZ_STR_appendPtr(err->secMessage, "Type ");
 CZ_STR_appendPtr(err->secMessage, vardef->name->ptr);
 CZ_STR_appendPtr(err->secMessage, " is not struct.");
 CZ_Error_print(err, true);
-fprintf(stderr,"src/compiler/compiler.cz:1251:55\n");fprintf(stderr,"undefined behaivior");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1249:55\n");fprintf(stderr,"undefined behaivior");exit(1);
 //somehow destruct: err 
 ;
 };
@@ -1532,7 +1531,7 @@ CZ_STR_appendPtr(err->secMessage, "Struct ");
 CZ_STR_appendPtr(err->secMessage, strct->name->ptr);
 CZ_STR_appendPtr(err->secMessage, " doesnt contain function.");
 CZ_Error_print(err, true);
-fprintf(stderr,"src/compiler/compiler.cz:1282:74\n");fprintf(stderr,"Struct doesnt contain function");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1280:74\n");fprintf(stderr,"Struct doesnt contain function");exit(1);
 //somehow destruct: err 
 ;
 };
@@ -1552,7 +1551,7 @@ Error* err=CZ_COMPILEPROCESS_generateError(this, accessChilds[0]->tokensStart);
 CZ_STR_appendPtr(err->message, "Type is not struct ");
 CZ_STR_appendPtr(err->message, deducedType->name->ptr);
 CZ_Error_print(err, true);
-fprintf(stderr,"src/compiler/compiler.cz:1299:47\n");fprintf(stderr,"undefined behaivior");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1297:47\n");fprintf(stderr,"undefined behaivior");exit(1);
 //somehow destruct: err 
 ;
 };
@@ -1589,7 +1588,7 @@ CZ_STR_appendPtr(err->secMessage, "Struct ");
 CZ_STR_appendPtr(err->secMessage, strct->name->ptr);
 CZ_STR_appendPtr(err->secMessage, " doesnt contain function.");
 CZ_Error_print(err, true);
-fprintf(stderr,"src/compiler/compiler.cz:1330:62\n");fprintf(stderr,"Struct doesnt contain function");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1328:62\n");fprintf(stderr,"Struct doesnt contain function");exit(1);
 //somehow destruct: err 
 ;
 };
@@ -1600,7 +1599,7 @@ CZ_COMPILEPROCESS_printScope(this);
 Error* err=CZ_COMPILEPROCESS_generateError(this, accessChilds[0]->tokensStart);
 CZ_STR_appendPtr(err->message, "Struct not defined ");
 CZ_Error_print(err, true);
-fprintf(stderr,"src/compiler/compiler.cz:1338:46\n");fprintf(stderr,"Struct not defined");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1336:46\n");fprintf(stderr,"Struct not defined");exit(1);
 //somehow destruct: err 
 ;
 };
@@ -1736,7 +1735,7 @@ CZ_STR_appendPtr(err->secMessage, "Did you mean ");
 CZ_STR_appendPtr(err->secMessage, closest);
 CZ_STR_appendPtr(err->secMessage, "?");
 CZ_Error_print(err, true);
-fprintf(stderr,"src/compiler/compiler.cz:1460:42\n");fprintf(stderr,"Undefined type");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1458:42\n");fprintf(stderr,"Undefined type");exit(1);
 //somehow destruct: err 
 ;
 };
@@ -1744,7 +1743,7 @@ fprintf(czStdOut, "%s*", token->value);
 ;
 }
 else {
-fprintf(stderr,"src/compiler/compiler.cz:1466:36\n");fprintf(stderr,"Unknown type");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1464:36\n");fprintf(stderr,"Unknown type");exit(1);
 ;
 };
 ;
@@ -1902,12 +1901,12 @@ fprintf(czStdOut, "\n");
 }
 else {
 fprintf(stderr,"%c%d%c  ", 34,ast->type, 34);
-fprintf(stderr,"src/compiler/compiler.cz:1602:36\n");fprintf(stderr,"Unknown ast type");exit(1);
+fprintf(stderr,"src/compiler/compiler.cz:1600:36\n");fprintf(stderr,"Unknown ast type");exit(1);
 ;
 };
 ;
 }
-void CZ_COMPILEPROCESS_funToCAst(COMPILEPROCESS* this, FunctionNode* ast, bool declr) {
+void CZ_COMPILEPROCESS_funToCAst(COMPILEPROCESS* this, FunctionNode* ast, bool declr, bool isMain) {
 NODE** childs;
 childs = (NODE**)ast->ast->children;
 CZ_COMPILEPROCESS_toCAst(this, childs[ast->ast->size-2]);
@@ -1934,6 +1933,11 @@ return;
 ;
 };
 fprintf(czStdOut, ") {\n");
+if (isMain) {
+fprintf(czStdOut, "czStdOut = stdout;\n");
+fprintf(czStdOut, "czStdIn = stdin;\n");
+;
+};
 if (this->debug) {
 fprintf(czStdOut, "printf(\"%s\\n\");\n", token->value);
 ;

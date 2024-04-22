@@ -77,8 +77,7 @@ this->scope=scope;
 ;
 }
 void CZ_TypeChecker_testFunctionLeak(TypeChecker* this, FunctionNode* ast) {
-this->scope=malloc(sizeof(SCOPE));
-CZ_SCOPE_init(this->scope);
+this->scope=genererateGlobalScope();
 CZ_TypeChecker_scopePush(this);
 int pos=0;
 while (pos<ast->ast->size-2) {
@@ -92,8 +91,7 @@ CZ_TypeChecker_scopePop(this);
 }
 void CZ_TypeChecker_testStructLeak(TypeChecker* this, STRCTENTRY* strct) {
 for(int i = 0; i < strct->fSize; i++) {
-this->scope=malloc(sizeof(SCOPE));
-CZ_SCOPE_init(this->scope);
+this->scope=genererateGlobalScope();
 FunctionNode* ast=strct->funs[i]->ast;
 NODE** childs;
 childs = (NODE**)strct->funs[i]->ast->ast->children;
@@ -142,7 +140,7 @@ CZ_STR_appendPtr(err->secMessage, " got ");
 STR* rightstr=CZ_TYPE_toSTR(rigType);
 CZ_STR_appendPtr(err->secMessage, rightstr->ptr);
 CZ_Error_print(err, true);
-fprintf(stderr,"src/optimalization/typeChecker.cz:126:24\n");fprintf(stderr,"");exit(1);
+fprintf(stderr,"src/optimalization/typeChecker.cz:124:24\n");fprintf(stderr,"");exit(1);
 //somehow destruct: rightstr leftstr err 
 ;
 };
@@ -423,7 +421,7 @@ else if (ast->children[0]->type==1) {
 NODE** accessChilds=ast->children[0]->children;
 TYPE* type=CZ_COMPILEPROCESS_deduceType(this->process, accessChilds[0], this->scope);
 if (type->variant!=6) {
-fprintf(stderr,"src/optimalization/typeChecker.cz:343:60\n");fprintf(stderr,"Cant access member of non struct");exit(1);
+fprintf(stderr,"src/optimalization/typeChecker.cz:341:60\n");fprintf(stderr,"Cant access member of non struct");exit(1);
 ;
 };
 STRCTENTRY* strct=CZ_COMPILEPROCESS_getStructByName(this->process, type->name->ptr);
@@ -436,7 +434,7 @@ if (fun==0) {
 Error* err=CZ_COMPILEPROCESS_generateError(this->process, ast->children[0]->tokensStart);
 CZ_STR_appendPtr(err->message, "Function not found");
 CZ_Error_print(err, true);
-fprintf(stderr,"src/optimalization/typeChecker.cz:359:42\n");fprintf(stderr,"Function not found");exit(1);
+fprintf(stderr,"src/optimalization/typeChecker.cz:357:42\n");fprintf(stderr,"Function not found");exit(1);
 //somehow destruct: err 
 ;
 };
@@ -458,7 +456,7 @@ CZ_STR_appendPtr(err->secMessage, " args got ");
 CZ_STR_appendInt(err->secMessage, ast->size-1);
 CZ_STR_appendPtr(err->secMessage, " args.");
 CZ_Error_print(err, true);
-fprintf(stderr,"src/optimalization/typeChecker.cz:378:24\n");fprintf(stderr,"");exit(1);
+fprintf(stderr,"src/optimalization/typeChecker.cz:376:24\n");fprintf(stderr,"");exit(1);
 //somehow destruct: err 
 ;
 };

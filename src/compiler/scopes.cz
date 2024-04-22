@@ -106,3 +106,34 @@ struct SCOPE {
     }
 
 }
+
+
+generateGlobalScope { &SCOPE
+    scope:SCOPE = new SCOPE;
+    scope.parent = 0;
+    out = new DEFINEDVARS;
+    out.name = toSTR "czStdOut";
+    out.typ = new TYPE;
+    out.typ.variant = TypeVariant.TypePointer;
+    out.typ.dereference = new TYPE;
+    out.typ.dereference.variant = TypeVariant.TypeVoid;
+
+    in = new DEFINEDVARS;
+    in.name = toSTR "czStdIn";
+    in.typ = zavolej out.typ.copy;
+
+    //cin = new DEFINEDVARS;
+    //cin.name = toSTR "in";
+    //cin.typ = zavolej out.typ.copy;
+    //cin.typ.isReadOnly = true;
+
+    //cout = new DEFINEDVARS;
+    //cout.name = toSTR "out";
+    //cout.typ = zavolej cin.typ.copy;
+
+    scope.define &out;
+    scope.define &in;
+    //scope.define &cout;
+    //scope.define &cin;
+    return &scope;
+}

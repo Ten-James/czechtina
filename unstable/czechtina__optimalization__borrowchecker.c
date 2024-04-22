@@ -85,7 +85,7 @@ if (this->shouldPrint) {
 fprintf(czStdOut, "Testing function %s: %s\n", this->process->filePath->ptr, ast->funName);
 ;
 };
-this->scope=malloc(sizeof(SCOPE));
+this->scope=genererateGlobalScope();
 CZ_SCOPE_init(this->scope);
 this->safeScope=this->scope;
 CZ_BorrowChecker_scopePush(this);
@@ -101,7 +101,7 @@ CZ_BorrowChecker_scopePop(this);
 }
 void CZ_BorrowChecker_testStructLeak(BorrowChecker* this, STRCTENTRY* strct) {
 for(int i = 0; i < strct->fSize; i++) {
-this->scope=malloc(sizeof(SCOPE));
+this->scope=genererateGlobalScope();
 CZ_SCOPE_init(this->scope);
 this->safeScope=this->scope;
 FunctionNode* ast=strct->funs[i]->ast;

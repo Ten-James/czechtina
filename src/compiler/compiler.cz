@@ -768,9 +768,7 @@ struct COMPILEPROCESS {
         if this.program == 0 {
             return;
         }
-        
-        this.scope = new SCOPE;
-        zavolej this.scope.init;
+        this.scope = zavolej genererateGlobalScope;
         
         writer:&FILEWRITER = new FILEWRITER;
         name:&STR = toSTR buildDir;
@@ -855,7 +853,7 @@ struct COMPILEPROCESS {
         }
 
         for i:int -> 0 do this.program.fSize {
-            this.funToCAst this.program.functions[i], true;
+            this.funToCAst this.program.functions[i], true, false;
         }
 
         for i:int -> 0 do this.program.sSize {
@@ -866,7 +864,7 @@ struct COMPILEPROCESS {
 
 
         for i:int -> 0 do this.program.fSize {
-            this.funToCAst this.program.functions[i], false;
+            this.funToCAst this.program.functions[i], false, false;
         }
 
         for i:int -> 0 do this.program.sSize {
@@ -875,7 +873,7 @@ struct COMPILEPROCESS {
         }
 
         if this.program.main != 0 {
-            this.funToCAst this.program.main, false;
+            this.funToCAst this.program.main, false, true;
         }
 
         if this.program.packageName != 0 {
@@ -1604,7 +1602,7 @@ struct COMPILEPROCESS {
     }
 
 
-    funToCAst ast:FunctionNode, declr:bool {void
+    funToCAst ast:FunctionNode, declr:bool, isMain:bool {void
         childs:pointer<NODE>;
         inC "childs = (NODE**)ast->ast->children";
         // first token is function name
@@ -1634,6 +1632,10 @@ struct COMPILEPROCESS {
         }
 
         printf ") {\n";
+        if isMain {
+            printf "czStdOut = stdout;\n";
+            printf "czStdIn = stdin;\n";
+        }
         if this.debug {
             printf "printf(\"%s\\n\");\n", token.value;
         } 

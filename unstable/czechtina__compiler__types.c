@@ -20,6 +20,7 @@ STR* name;
 TYPE* dereference;
 bool isMemMove;
 bool isOptional;
+bool isReadOnly;
 } TYPE;
 void CZ_TYPE_printType(TYPE* this);
 void CZ_TYPE_toC(TYPE* this);
@@ -28,7 +29,7 @@ void CZ_TYPE_appendSTR(TYPE* this, STR* str);
 TYPE* CZ_TYPE_copy(TYPE* this);
 TYPE* generateType(NODE* ast, TOKEN** tokens) {
 if (ast==0) {
-fprintf(stderr,"src/compiler/types.cz:124:45\n");fprintf(stderr,"Invalid input to generateType");exit(1);
+fprintf(stderr,"src/compiler/types.cz:125:45\n");fprintf(stderr,"Invalid input to generateType");exit(1);
 ;
 };
 NODE** childs;
@@ -82,19 +83,19 @@ typ->variant=1;
 }
 else {
 fprintf(czStdOut,"%d", token->type); fputs("\n",czStdOut);
-fprintf(stderr,"src/compiler/types.cz:163:32\n");fprintf(stderr,"Unknown type");exit(1);
+fprintf(stderr,"src/compiler/types.cz:164:32\n");fprintf(stderr,"Unknown type");exit(1);
 ;
 };
 ;
 return typ;
 ;
 };
-fprintf(stderr,"src/compiler/types.cz:169:41\n");fprintf(stderr,"Invalid input to generateType");exit(1);
+fprintf(stderr,"src/compiler/types.cz:170:41\n");fprintf(stderr,"Invalid input to generateType");exit(1);
 ;
 }
 void CZ_TYPE_printType(TYPE* this) {
 if (this==0) {
-fprintf(stderr,"src/compiler/types.cz:17:41\n");fprintf(stderr,"invalid type to print");exit(1);
+fprintf(stderr,"src/compiler/types.cz:18:41\n");fprintf(stderr,"invalid type to print");exit(1);
 ;
 };
 if (this->isMemMove) {
@@ -145,7 +146,7 @@ fprintf(czStdOut,">");
 }
 void CZ_TYPE_toC(TYPE* this) {
 if (this==0) {
-fprintf(stderr,"src/compiler/types.cz:52:41\n");fprintf(stderr,"invalid type to print");exit(1);
+fprintf(stderr,"src/compiler/types.cz:53:41\n");fprintf(stderr,"invalid type to print");exit(1);
 ;
 };
 if (this->variant==0) {

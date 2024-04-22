@@ -4,7 +4,7 @@ build/
 main
 *.bak
 czechtina
-czechtina-cz
+un-czechtina
 *.dSYM
 .DS_store
 .vscode/

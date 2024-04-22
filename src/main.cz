@@ -3,7 +3,6 @@ use czechtina::cli;
 
 
 main argc:int, argv:pointer<pointer<char>> { int
-    inC "czStdOut = stdout";
     arg:&ARGS = new ARGS;
     arg.init argc, argv;
     return cli &arg;

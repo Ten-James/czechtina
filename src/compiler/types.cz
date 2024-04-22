@@ -11,6 +11,7 @@ struct TYPE {
     dereference:&?TYPE;
     isMemMove:bool;
     isOptional:bool;
+    isReadOnly:bool;
 
     printType { void
         if this == 0 {

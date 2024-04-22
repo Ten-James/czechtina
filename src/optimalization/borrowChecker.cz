@@ -61,7 +61,7 @@ struct BorrowChecker {
 
     testFunctionLeak ast:FunctionNode { void
         if this.shouldPrint -> printf "Testing function %s: %s\n",this.process.filePath.ptr, ast.funName;
-        this.scope = new SCOPE;
+        this.scope = zavolej genererateGlobalScope;
         zavolej this.scope.init;
         this.safeScope = this.scope;
         zavolej this.scopePush;
@@ -78,7 +78,7 @@ struct BorrowChecker {
 
     testStructLeak strct:STRCTENTRY { void
         for i:int -> 0 do strct.fSize {
-            this.scope = new SCOPE;
+            this.scope = zavolej genererateGlobalScope;
             zavolej this.scope.init;
             this.safeScope = this.scope;
             ast:FunctionNode = strct.funs[i].ast;

@@ -61,8 +61,7 @@ struct TypeChecker {
     }
 
     testFunctionLeak ast:FunctionNode { void
-        this.scope = new SCOPE;
-        zavolej this.scope.init;
+        this.scope = zavolej genererateGlobalScope;
         zavolej this.scopePush;
         pos:int = 0;
         while pos < ast.ast.size - 2 {
@@ -77,8 +76,7 @@ struct TypeChecker {
 
     testStructLeak strct:STRCTENTRY { void
         for i:int -> 0 do strct.fSize {
-            this.scope = new SCOPE;
-            zavolej this.scope.init;
+            this.scope = zavolej genererateGlobalScope;
             ast:FunctionNode = strct.funs[i].ast;
             childs:pointer<NODE>;
             inC "childs = (NODE**)strct->funs[i]->ast->ast->children";

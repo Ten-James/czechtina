@@ -13,6 +13,7 @@ extern void* czStdIn;
 typedef void* FileStream;
 typedef struct _DEFINEDVARS DEFINEDVARS;
 typedef struct _SCOPE SCOPE;
+SCOPE* genererateGlobalScope();
 typedef struct _DEFINEDVARS {
 STR* name;
 TYPE* typ;
@@ -31,6 +32,24 @@ char* CZ_SCOPE_getClosestVariable(SCOPE* this, char* name, int cur);
 TYPE* CZ_SCOPE_getType(SCOPE* this, STR* name);
 DEFINEDVARS* CZ_SCOPE_get(SCOPE* this, char* name);
 void CZ_SCOPE_moveMemFromThisScope(SCOPE* this, STR* name);
+SCOPE* genererateGlobalScope() {
+SCOPE* scope=malloc(sizeof(SCOPE));
+scope->parent=0;
+DEFINEDVARS* out=malloc(sizeof(DEFINEDVARS));
+out->name=toSTR("czStdOut");
+out->typ=malloc(sizeof(TYPE));
+out->typ->variant=5;
+out->typ->dereference=malloc(sizeof(TYPE));
+out->typ->dereference->variant=0;
+DEFINEDVARS* in=malloc(sizeof(DEFINEDVARS));
+in->name=toSTR("czStdIn");
+in->typ=CZ_TYPE_copy(out->typ);
+CZ_SCOPE_define(scope, out);
+CZ_SCOPE_define(scope, in);
+;
+return scope;
+;
+}
 void CZ_SCOPE_init(SCOPE* this) {
 this->vars=malloc(sizeof(DEFINEDVARS*) *(10));
 this->size=0;
